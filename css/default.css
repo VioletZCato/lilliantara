@@ -1,88 +1,270 @@
-/* base */
+/* ============================================================
+   lilliantara.com — shared styles
+   Warm sand by day, desert night by dark. Cinnamon accents.
+   ============================================================ */
 
 :root {
-    /*
-    color-scheme: light dark;
-    --background-color: light-dark(#d0d0d0, #404040);
-    */
-    --background-color: #ccc;
+  color-scheme: light dark;
+
+  --bg: #f5ecdd;
+  --bg-glow: #fdf7ea;
+  --ink: #33261a;
+  --ink-soft: #6f5b47;
+  --cinnamon: #b85c1e;
+  --cinnamon-bright: #d3752f;
+  --sage: #5f6f4a;
+  --line: rgba(51, 38, 26, 0.16);
+  --btn-bg: rgba(255, 255, 255, 0.40);
+  --btn-bg-hover: rgba(255, 255, 255, 0.72);
+  --btn-shadow:
+    0 1px 2px rgba(51, 38, 26, 0.07),
+    0 8px 24px -14px rgba(51, 38, 26, 0.30);
+  --contact-ink: #fdf4e8;
+  --grain-opacity: 0.05;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171009;
+    --bg-glow: #261809;
+    --ink: #ecdfc9;
+    --ink-soft: #a8917a;
+    --cinnamon: #e08a41;
+    --cinnamon-bright: #f2a45c;
+    --sage: #a3b784;
+    --line: rgba(236, 223, 201, 0.18);
+    --btn-bg: rgba(255, 255, 255, 0.045);
+    --btn-bg-hover: rgba(255, 255, 255, 0.10);
+    --btn-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.40),
+      0 12px 32px -14px rgba(0, 0, 0, 0.65);
+    --contact-ink: #1d1207;
+    --grain-opacity: 0.06;
+  }
+}
+
+/* ---------- base ---------- */
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
 
 body {
-    font-family: "EB Garamond", serif;
-    background-color: var(--background-color);
-    margin-left: 16.6vw;
-    margin-right: 16.6vw;
-    text-align: center;
+  font-family: "EB Garamond", Garamond, Georgia, serif;
+  color: var(--ink);
+  background-color: var(--bg);
+  background-image: radial-gradient(120% 90% at 50% 12%, var(--bg-glow), var(--bg) 72%);
+  background-attachment: fixed;
+  min-height: 100svh;
+  text-align: center;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* core */
+/* faint paper / dune grain */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection {
+  background: color-mix(in srgb, var(--cinnamon) 30%, transparent);
+}
+
+/* the spice canvas rides above everything, but never blocks a click */
+#spice {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+main {
+  position: relative;
+  z-index: 2;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2.4rem, 6.5vh, 4.2rem);
+  padding: clamp(2rem, 6vh, 4rem) 1.25rem;
+}
+
+/* ---------- core ---------- */
 
 h1 {
-    margin-top: 6vh;
-    font-size: 18vh;
-    margin-bottom: 0;
+  margin: 0;
+  font-size: clamp(3.2rem, 10vw, 6.6rem);
+  font-weight: 500;
+  font-style: italic;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+  text-wrap: balance;
 }
 
-h2 {
-    margin-top: 6vh;
-    font-size: 8vh;
-    margin-bottom: 0vh;
+/* the full stop is a mote of spice */
+h1 .period {
+  color: var(--cinnamon);
+  font-style: normal;
+  display: inline-block;
+  animation: breathe 5.5s ease-in-out 2.4s infinite;
 }
 
-h3 {
-    margin-top: 6vh;
-    font-size: 12vh;
-    margin-bottom: 6vh;
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.9rem, 2.2vh, 1.5rem);
+  font-size: clamp(1.5rem, 3.4vw, 2.15rem);
+  line-height: 1.25;
 }
 
 a {
-    color: inherit;
-    text-decoration: none;
+  color: inherit;
+  text-decoration: none;
 }
 
-/* classes */
+a:focus-visible {
+  outline: 2px solid var(--cinnamon);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
 
 .handle {
-    color: #00d;
+  color: var(--cinnamon);
+  font-style: italic;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
 .site {
-    color: #0d0;
+  color: var(--sage);
+  transition: color 0.3s ease;
+}
+
+a:hover .handle {
+  color: var(--cinnamon-bright);
+  text-shadow: 0 0 18px rgba(224, 138, 65, 0.35);
+}
+
+a:hover .site {
+  text-shadow: 0 0 18px rgba(140, 165, 110, 0.30);
+}
+
+/* ---------- plain-link variant ---------- */
+
+.links a:not(.btn) {
+  padding: 0.05em 0.15em;
+  background-image: linear-gradient(var(--cinnamon), var(--cinnamon));
+  background-repeat: no-repeat;
+  background-size: 0% 1.5px;
+  background-position: 50% calc(100% - 0.06em);
+  transition: background-size 0.45s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.links a:not(.btn):hover {
+  background-size: 100% 1.5px;
 }
 
 .contact {
-    color: #530;
+  font-size: clamp(1.3rem, 2.8vw, 1.65rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cinnamon);
+  transition: color 0.3s ease, letter-spacing 0.45s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.button {
-    font-size: 8vh;
+a.contact:not(.btn):hover {
+  color: var(--cinnamon-bright);
+  letter-spacing: 0.22em;
 }
 
-/* buttons */
+/* ---------- button variant ---------- */
 
-.styled {
-  border: 0px;
-  line-height: 1;
-  font-size: 6vh;
-  padding: 0.75vw 0.75vw;
-  margin-bottom: 1vh;
-  font-family: inherit;
-  text-align: center;
-  color: inherit;
-  border-radius: 8px;
-  background-color: #bbb;
-  box-shadow:
-    inset 2px 2px 3px rgb(255 255 255 / 0.6),
-    inset -2px -2px 3px rgb(0 0 0 / 0.6);
+.links--buttons {
+  font-size: clamp(1.35rem, 3vw, 1.9rem);
 }
 
-.styled:hover {
-  background-color: #aaa;
+.btn {
+  display: inline-block;
+  padding: 0.34em 1.15em 0.42em;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--btn-bg);
+  box-shadow: var(--btn-shadow);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition:
+    transform 0.35s cubic-bezier(0.2, 0.7, 0.3, 1),
+    background 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.35s ease;
 }
 
-.styled:active {
-  box-shadow:
-    inset -2px -2px 3px rgb(255 255 255 / 0.6),
-    inset 2px 2px 3px rgb(0 0 0 / 0.6);
+.btn:hover {
+  transform: translateY(-2px);
+  background: var(--btn-bg-hover);
+  border-color: color-mix(in srgb, var(--cinnamon) 45%, transparent);
+}
+
+.btn:active {
+  transform: translateY(0) scale(0.985);
+  transition-duration: 0.1s;
+}
+
+.btn--contact {
+  background: var(--cinnamon);
+  border-color: transparent;
+  color: var(--contact-ink);
+}
+
+.btn--contact:hover {
+  background: var(--cinnamon-bright);
+  border-color: transparent;
+}
+
+/* ---------- entrance ---------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+h1,
+.links a,
+.contact {
+  animation: rise 0.95s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+h1 { animation-delay: 0.1s; }
+.links a:nth-child(1) { animation-delay: 0.32s; }
+.links a:nth-child(2) { animation-delay: 0.44s; }
+.links a:nth-child(3) { animation-delay: 0.56s; }
+.contact { animation-delay: 0.72s; }
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
 }

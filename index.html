@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Lillian Tara — demos</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description" content="Demo variants for lilliantara.com">
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5ecdd">
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171009">
+        <script>try{var t=localStorage.getItem("lt-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='30' cy='34' r='13' fill='%23c96b2a'/%3E%3Ccircle cx='47' cy='15' r='5' fill='%23d98e4a'/%3E%3Ccircle cx='13' cy='49' r='4' fill='%23a34d1e'/%3E%3C/svg%3E">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="css/default.css">
+        <style>
+            /* chooser-only styles — the site's own stylesheet stays untouched */
+
+            .eyebrow {
+                margin: 0;
+                font-size: clamp(0.9rem, 2vw, 1.05rem);
+                letter-spacing: 0.22em;
+                text-transform: uppercase;
+                color: var(--ink-soft);
+            }
+
+            .choices {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: clamp(0.8rem, 2vw, 1.1rem);
+            }
+
+            .choice {
+                display: flex;
+                flex-direction: column;
+                gap: 0.3em;
+                min-width: 12.5rem;
+                padding: 1.15em 1.4em 1.25em;
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                background: var(--btn-bg);
+                box-shadow: var(--btn-shadow);
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+                text-decoration: none;
+                color: inherit;
+                transition:
+                    transform 0.35s cubic-bezier(0.2, 0.7, 0.3, 1),
+                    background 0.3s ease,
+                    border-color 0.3s ease;
+            }
+
+            .choice:hover {
+                transform: translateY(-3px);
+                background: var(--btn-bg-hover);
+                border-color: color-mix(in srgb, var(--cinnamon) 45%, transparent);
+            }
+
+            .choice:active { transform: translateY(-1px); }
+
+            .choice:focus-visible {
+                outline: 2px solid var(--cinnamon);
+                outline-offset: 4px;
+            }
+
+            .choice-name {
+                font-size: clamp(1.35rem, 3vw, 1.7rem);
+                line-height: 1.1;
+            }
+
+            .choice-note {
+                font-size: 0.9rem;
+                font-style: italic;
+                color: var(--ink-soft);
+            }
+
+            .themes {
+                display: inline-flex;
+                padding: 0.28rem;
+                border: 1px solid var(--line);
+                border-radius: 999px;
+                background: var(--btn-bg);
+            }
+
+            .themes button {
+                padding: 0.42em 1.15em;
+                border: 0;
+                border-radius: 999px;
+                background: none;
+                font: inherit;
+                font-size: 0.95rem;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+                color: var(--ink-soft);
+                cursor: pointer;
+                transition: background 0.3s ease, color 0.3s ease;
+            }
+
+            .themes button:hover { color: var(--ink); }
+
+            .themes button[aria-pressed="true"] {
+                background: var(--cinnamon);
+                color: var(--contact-ink);
+            }
+
+            .themes button:focus-visible {
+                outline: 2px solid var(--cinnamon);
+                outline-offset: 3px;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="spice" aria-hidden="true"></canvas>
+
+        <main>
+            <div>
+                <p class="eyebrow">lilliantara.com</p>
+                <h1>Demos<span class="period">.</span></h1>
+            </div>
+
+            <nav class="choices" aria-label="Demo variants">
+                <a class="choice" href="buttons.html">
+                    <span class="choice-name">Buttons</span>
+                    <span class="choice-note">tactile pills</span>
+                </a>
+                <a class="choice" href="hyperlinks.html">
+                    <span class="choice-name">Hyperlinks</span>
+                    <span class="choice-note">gapped rule, raised</span>
+                </a>
+                <a class="choice" href="hyperlinks-solid.html">
+                    <span class="choice-name">Hyperlinks</span>
+                    <span class="choice-note">solid rule, lowered</span>
+                </a>
+            </nav>
+
+            <div class="themes" role="group" aria-label="Theme">
+                <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+                <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+                <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+            </div>
+        </main>
+
+        <script src="js/spice.js" defer></script>
+        <script>
+            (() => {
+                const root = document.documentElement;
+                const buttons = document.querySelectorAll("[data-theme-set]");
+
+                function apply(choice) {
+                    if (choice === "dark" || choice === "light") {
+                        root.dataset.theme = choice;
+                        try { localStorage.setItem("lt-theme", choice); } catch (e) {}
+                    } else {
+                        choice = "auto";
+                        delete root.dataset.theme;
+                        try { localStorage.removeItem("lt-theme"); } catch (e) {}
+                    }
+                    for (const b of buttons) {
+                        b.setAttribute("aria-pressed", String(b.dataset.themeSet === choice));
+                    }
+                }
+
+                for (const b of buttons) {
+                    b.addEventListener("click", () => apply(b.dataset.themeSet));
+                }
+
+                let stored = null;
+                try { stored = localStorage.getItem("lt-theme"); } catch (e) {}
+                apply(stored || "auto");
+            })();
+        </script>
+    </body>
+</html>

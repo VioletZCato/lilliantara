@@ -3,45 +3,32 @@
    Warm sand by day, desert night by dark. Cinnamon accents.
    ============================================================ */
 
+/* One palette, both themes. light-dark() resolves against the used
+   color-scheme, so forcing that scheme below is all a theme switch needs —
+   no second copy of the palette to keep in sync. */
 :root {
   color-scheme: light dark;
 
-  --bg: #f5ecdd;
-  --bg-glow: #fdf7ea;
-  --ink: #33261a;
-  --ink-soft: #6f5b47;
-  --cinnamon: #b85c1e;
-  --cinnamon-bright: #d3752f;
-  --sage: #5f6f4a;
-  --line: rgba(51, 38, 26, 0.16);
-  --btn-bg: rgba(255, 255, 255, 0.40);
-  --btn-bg-hover: rgba(255, 255, 255, 0.72);
+  --bg: light-dark(#f5ecdd, #171009);
+  --bg-glow: light-dark(#fdf7ea, #261809);
+  --ink: light-dark(#33261a, #ecdfc9);
+  --ink-soft: light-dark(#6f5b47, #a8917a);
+  --cinnamon: light-dark(#b85c1e, #e08a41);
+  --cinnamon-bright: light-dark(#d3752f, #f2a45c);
+  --sage: light-dark(#5f6f4a, #a3b784);
+  --line: light-dark(rgba(51, 38, 26, 0.16), rgba(236, 223, 201, 0.18));
+  --btn-bg: light-dark(rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.045));
+  --btn-bg-hover: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.10));
   --btn-shadow:
-    0 1px 2px rgba(51, 38, 26, 0.07),
-    0 8px 24px -14px rgba(51, 38, 26, 0.30);
-  --contact-ink: #fdf4e8;
-  --grain-opacity: 0.05;
+    0 1px 2px light-dark(rgba(51, 38, 26, 0.07), rgba(0, 0, 0, 0.40)),
+    0 10px 28px -14px light-dark(rgba(51, 38, 26, 0.30), rgba(0, 0, 0, 0.65));
+  --contact-ink: light-dark(#fdf4e8, #1d1207);
+  --grain-opacity: 0.055;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #171009;
-    --bg-glow: #261809;
-    --ink: #ecdfc9;
-    --ink-soft: #a8917a;
-    --cinnamon: #e08a41;
-    --cinnamon-bright: #f2a45c;
-    --sage: #a3b784;
-    --line: rgba(236, 223, 201, 0.18);
-    --btn-bg: rgba(255, 255, 255, 0.045);
-    --btn-bg-hover: rgba(255, 255, 255, 0.10);
-    --btn-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.40),
-      0 12px 32px -14px rgba(0, 0, 0, 0.65);
-    --contact-ink: #1d1207;
-    --grain-opacity: 0.06;
-  }
-}
+/* index.html writes these to override the OS preference */
+:root[data-theme="light"] { color-scheme: only light; }
+:root[data-theme="dark"]  { color-scheme: only dark; }
 
 /* ---------- base ---------- */
 
@@ -166,16 +153,60 @@ a:hover .site {
 /* ---------- plain-link variant ---------- */
 
 .links a:not(.btn) {
+  position: relative;
   padding: 0.05em 0.15em;
-  background-image: linear-gradient(var(--cinnamon), var(--cinnamon));
-  background-repeat: no-repeat;
-  background-size: 0% 1.5px;
-  background-position: 50% calc(100% - 0.06em);
-  transition: background-size 0.45s cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* the gap stops below are positions along this line — wrapping would
+     slide the text out from under them */
+  white-space: nowrap;
 }
 
-.links a:not(.btn):hover {
-  background-size: 100% 1.5px;
+/* The rule lives in its own box so the centre-out wipe can clip it without
+   clipping the text, and so gaps can be cut straight into it. Same reveal as
+   before: zero width at the centre, opening outwards. */
+.links a:not(.btn)::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.17em; /* 3px above where the rule originally sat */
+  height: 1.5px;
+  background: var(--cinnamon);
+  clip-path: inset(0 50%);
+  transition: clip-path 0.45s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.links a:not(.btn):hover::after {
+  clip-path: inset(0);
+}
+
+/* Gaps at the @ and g descenders, measured off each link's own text and
+   expressed as a share of its width — so they hold as the type scales.
+   Keyed on href rather than order, since the positions belong to the words. */
+.links a[href*="x.com"]::after {
+  background: linear-gradient(90deg,
+    var(--cinnamon) 0 12.6%, transparent 12.6% 24%, var(--cinnamon) 24%);
+}
+
+.links a[href*="substack.com"]::after {
+  background: linear-gradient(90deg,
+    var(--cinnamon) 0 50.7%, transparent 50.7% 68.8%, var(--cinnamon) 68.8%);
+}
+
+/* the g ends this line, so the rule simply stops short of it */
+.links a[href^="https://gesserit.org"]::after {
+  background: linear-gradient(90deg, var(--cinnamon) 0 86.4%, transparent 86.4%);
+}
+
+/* ---------- solid-rule variant (hyperlinks-solid.html) ---------- */
+
+/* No gaps: the rule drops below the deepest descender instead. The g tail
+   reaches 8px under the baseline, so this clears it by roughly 3.5px. */
+.rule-solid .links a:not(.btn)::after,
+.rule-solid .links a[href*="x.com"]::after,
+.rule-solid .links a[href*="substack.com"]::after,
+.rule-solid .links a[href^="https://gesserit.org"]::after {
+  bottom: -0.15em;
+  background: var(--cinnamon);
 }
 
 .contact {

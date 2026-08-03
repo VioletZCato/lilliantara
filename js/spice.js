@@ -1,24 +1,34 @@
 /* ============================================================
-   spice.js — cursor dust, dwell piles, lineage trees
-   The cursor sheds orange-cinnamon dust. Hold still and it
-   piles up; hold longer and the pile seeds a phylogenetic
-   tree, which grows, sways, and eventually crumbles back
-   into dust.
+   spice.js — three layers of desert ambience
+     back  (#spice-back): dunes, scattered star twinkles, motes
+     mid   (#spice):      cursor dust, dwell piles, saguaro trees
+     front (DOM):         the page's own text and buttons
+   Collision rules:
+     across layers — the deeper element blurs and fades when it
+       comes within 10px of something on a nearer layer;
+     tree vs tree  — the older tree dissolves early;
+     dune vs dune  — the farther ridge line stops where it passes
+       behind a nearer one;
+     star vs star  — a newcomer too close to a neighbour doubles
+       the neighbour instead of spawning.
    ============================================================ */
 
 (() => {
   "use strict";
 
-  const canvas = document.getElementById("spice");
-  if (!canvas) return;
+  const midCanvas = document.getElementById("spice");
+  const backCanvas = document.getElementById("spice-back");
+  if (!midCanvas || !backCanvas) return;
 
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   if (reduceMotion.matches) {
-    canvas.remove();
+    midCanvas.remove();
+    backCanvas.remove();
     return;
   }
 
-  const ctx = canvas.getContext("2d");
+  const ctx = midCanvas.getContext("2d");
+  const bctx = backCanvas.getContext("2d");
 
   /* ---------- palettes ---------- */
 
@@ -27,8 +37,8 @@
       dust: ["#b4561f", "#c96b2a", "#8a4a1f", "#d98e4a", "#6e3d1b", "#c05a1e"],
       glint: "#e8934a",
       branch: "#5d3d24",
-      branchTip: "#a35622",
-      node: "#b4561f",
+      leaf: "#b4ff4b",
+      dune: "#7d6b3e",
       mote: "rgba(140, 90, 45,",
       particleComposite: "source-over"
     },
@@ -36,18 +46,27 @@
       dust: ["#e08a41", "#f0a45c", "#c2691f", "#f7c98a", "#a3521c", "#ffb36b"],
       glint: "#ffe0b0",
       branch: "#d98a45",
-      branchTip: "#f2b06a",
-      node: "#f7c081",
+      leaf: "#a7e14e",
+      dune: "#8a744a",
       mote: "rgba(240, 180, 110,",
       particleComposite: "lighter"
     }
   };
 
   const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
-  let pal = darkMq.matches ? PALETTES.dark : PALETTES.light;
-  const onScheme = () => { pal = darkMq.matches ? PALETTES.dark : PALETTES.light; };
-  if (darkMq.addEventListener) darkMq.addEventListener("change", onScheme);
-  else darkMq.addListener(onScheme);
+  let pal = PALETTES.light;
+  // honour the site's own theme override (index.html writes data-theme)
+  // before falling back to the OS preference
+  function computePal() {
+    const forced = document.documentElement.dataset.theme;
+    const dark = forced === "dark" || (forced !== "light" && darkMq.matches);
+    pal = dark ? PALETTES.dark : PALETTES.light;
+  }
+  computePal();
+  if (darkMq.addEventListener) darkMq.addEventListener("change", computePal);
+  else darkMq.addListener(computePal);
+  new MutationObserver(computePal)
+    .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
   /* ---------- sizing ---------- */
 
@@ -56,12 +75,13 @@
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth;
     H = window.innerHeight;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const [cv, c] of [[midCanvas, ctx], [backCanvas, bctx]]) {
+      cv.width = W * dpr;
+      cv.height = H * dpr;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
   }
   resize();
-  window.addEventListener("resize", resize);
 
   /* ---------- helpers ---------- */
 
@@ -70,6 +90,53 @@
   const gauss = () => (Math.random() + Math.random() + Math.random()) / 1.5 - 1;
   const pick = (arr) => arr[(Math.random() * arr.length) | 0];
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const easeOut = (p) => p * (2 - p);
+
+  function rectsOverlap(a, b, pad) {
+    return a.left < b.right + pad && a.right > b.left - pad &&
+           a.top < b.bottom + pad && a.bottom > b.top - pad;
+  }
+
+  // each dimmable thing carries a .dim that eases toward 0 or 1,
+  // driving the cross-layer blur-and-fade rule
+  function easeDim(obj, near, dt) {
+    const target = near ? 1 : 0;
+    obj.dim += (target - obj.dim) * Math.min(1, dt * 6);
+    if (!near && obj.dim < 0.02) obj.dim = 0;
+    return obj.dim;
+  }
+
+  /* ---------- keep-clear zones around the page's text and UI ---------- */
+
+  let uiRects = [];
+  let rectTimer = 0;
+
+  function refreshRects() {
+    uiRects = [];
+    const els = document.querySelectorAll("main h1, main p, main a, main .themes");
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      uiRects.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+    }
+  }
+  refreshRects();
+
+  function boxNearUI(box, pad) {
+    for (const r of uiRects) {
+      if (box.left < r.right + pad && box.right > r.left - pad &&
+          box.top < r.bottom + pad && box.bottom > r.top - pad) return true;
+    }
+    return false;
+  }
+
+  function pointNearUI(x, y, pad) {
+    for (const r of uiRects) {
+      if (x > r.left - pad && x < r.right + pad &&
+          y > r.top - pad && y < r.bottom + pad) return true;
+    }
+    return false;
+  }
 
   /* ---------- tuning ---------- */
 
@@ -80,8 +147,9 @@
   const SEED_DELAY = 1800;      // ms of stillness before the pile seeds a tree
   const DISSOLVE_MS = 3200;     // tree crumble duration
   const PILE_DISPERSE_MS = 1500;
+  const LAYER_PAD = 10;         // cross-layer proximity that triggers dim/blur
 
-  /* ---------- particles ---------- */
+  /* ---------- particles (mid layer: the cursor's dust) ---------- */
 
   const particles = [];
 
@@ -119,6 +187,9 @@
       const lp = p.life / p.ttl;
       let a = lp < 0.15 ? lp / 0.15 : 1 - (lp - 0.15) / 0.85;
 
+      // mid layer yields to the front layer: dust fades near text
+      if (pointNearUI(p.x, p.y, LAYER_PAD)) a *= 0.35;
+
       if (p.glint) {
         a *= 0.55 + 0.45 * Math.sin(now * 0.02 + p.tw);
         const s = p.size * 2.4;
@@ -141,7 +212,7 @@
     ctx.globalCompositeOperation = "source-over";
   }
 
-  /* ---------- ambient motes (barely-there drift) ---------- */
+  /* ---------- ambient motes (back layer, barely-there drift) ---------- */
 
   const motes = [];
   for (let i = 0; i < 12; i++) {
@@ -163,19 +234,242 @@
       if (m.x < -10) m.x = W + 10; else if (m.x > W + 10) m.x = -10;
       if (m.y < -10) m.y = H + 10; else if (m.y > H + 10) m.y = -10;
       const a = 0.05 + 0.07 * (0.5 + 0.5 * Math.sin(now * 0.001 * m.sp + m.tw));
-      ctx.fillStyle = pal.mote + a + ")";
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, m.size, 0, TAU);
-      ctx.fill();
+      bctx.fillStyle = pal.mote + a + ")";
+      bctx.beginPath();
+      bctx.arc(m.x, m.y, m.size, 0, TAU);
+      bctx.fill();
     }
   }
 
-  /* ---------- piles ---------- */
+  /* ---------- dunes (back layer: fading ridge lines) ---------- */
+
+  const DUNE_CYCLE = 15000;   // a touch brisker than the original 20s breath
+  const DUNES_PER_SIDE = 3;
+  const dunes = [];
+
+  for (let side = 0; side < 2; side++) {
+    for (let i = 0; i < DUNES_PER_SIDE; i++) {
+      dunes.push({
+        side,
+        t0: performance.now() - rand(0, DUNE_CYCLE),
+        active: false,
+        fade: 0,
+        dim: 0
+      });
+    }
+  }
+
+  function ridgeRise(d, t) {
+    return t < d.peakT
+      ? Math.pow(t / d.peakT, 1.7)
+      : Math.pow((1 - t) / (1 - d.peakT), 1.35);
+  }
+
+  function makeRidge(d) {
+    const N = 30;
+    d.pts = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      d.pts.push(d.x + t * d.w, d.y - d.h * ridgeRise(d, t));
+    }
+  }
+
+  // height of dune d's surface at x; Infinity outside its span
+  function ridgeYat(d, x) {
+    const t = (x - d.x) / d.w;
+    if (t <= 0 || t >= 1) return Infinity;
+    return d.y - d.h * ridgeRise(d, t);
+  }
+
+  function placeDune(d) {
+    d.active = false;
+    if (W < 760) return; // no side room on small screens
+    const bandL = d.side === 0 ? W * 0.02 : W * 0.67;
+    const bandR = d.side === 0 ? W * 0.33 : W * 0.98;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const w = rand(120, Math.min(300, W * 0.24));
+      if (bandR - bandL <= w) continue;
+      let x, y;
+      // dunes like company: sometimes settle overlapping a neighbour,
+      // which is what the behind-one-another occlusion is for
+      const mates = dunes.filter((o) => o !== d && o.active && o.side === d.side);
+      if (mates.length && Math.random() < 0.45) {
+        const m = pick(mates);
+        x = m.x + rand(-0.65, 0.65) * m.w;
+        y = m.y + rand(-6, 12);
+        if (x < bandL || x + w > bandR || y > H * 0.94 || y < H * 0.1 + 30) continue;
+      } else {
+        x = rand(bandL, bandR - w);
+        y = rand(H * 0.10 + 30, H * 0.94);
+      }
+      const h = rand(12, 30);
+      const box = { left: x, right: x + w, top: y - h, bottom: y + 3 };
+      if (boxNearUI(box, 18)) continue;
+      d.x = x; d.y = y; d.w = w; d.h = h;
+      d.peakT = rand(0.45, 0.72);
+      d.box = box;
+      makeRidge(d);
+      d.active = true;
+      return;
+    }
+  }
+
+  function updateAndDrawDunes(dt, now) {
+    // advance every fade clock first so occlusion sees current values
+    for (const d of dunes) {
+      let u = (now - d.t0) / DUNE_CYCLE;
+      if (u >= 1) {
+        // keep each dune's own phase, even after a long tab-hidden pause —
+        // resetting to zero would leave the whole field breathing in unison
+        d.t0 = now - ((now - d.t0) % DUNE_CYCLE);
+        u = (now - d.t0) / DUNE_CYCLE;
+        placeDune(d); // drift somewhere new for the next breath
+      }
+      if (!d.active && u < 0.03) placeDune(d);
+      d.fade = d.active ? Math.pow(Math.sin(Math.PI * u), 1.5) : 0;
+    }
+
+    for (const d of dunes) {
+      if (!d.active || d.fade <= 0.015) continue;
+
+      // back layer yields to mid and front layers
+      const near = boxNearUI(d.box, LAYER_PAD) ||
+        trees.some((tr) => tr.state !== "dissolving" && rectsOverlap(d.box, tr.bbox, LAYER_PAD));
+      const dim = easeDim(d, near, dt);
+      const alpha = 0.5 * d.fade * (1 - 0.55 * dim);
+      if (alpha <= 0.012) continue;
+
+      bctx.filter = dim > 0.04 ? "blur(" + (dim * 2.2).toFixed(2) + "px)" : "none";
+      bctx.strokeStyle = pal.dune;
+      bctx.lineWidth = 2.6;
+      bctx.lineCap = "round";
+      bctx.lineJoin = "round";
+
+      // draw the ridge in runs, cutting the line where it passes behind a
+      // nearer (lower-baseline) dune — the intersection point ends the run
+      let run = [];
+      let runAlpha = 0;
+      const flush = () => {
+        if (run.length >= 4) {
+          bctx.globalAlpha = runAlpha;
+          bctx.beginPath();
+          bctx.moveTo(run[0], run[1]);
+          for (let k = 2; k < run.length; k += 2) bctx.lineTo(run[k], run[k + 1]);
+          bctx.stroke();
+        }
+        run = [];
+      };
+
+      for (let i = 0; i < d.pts.length; i += 2) {
+        const px = d.pts[i], py = d.pts[i + 1];
+        let occ = 0;
+        for (const o of dunes) {
+          if (o === d || !o.active || o.fade <= 0.03) continue;
+          if (o.y <= d.y) continue; // only nearer dunes occlude
+          if (py > ridgeYat(o, px) - 1.2) occ = Math.max(occ, Math.min(1, o.fade * 1.4));
+        }
+        const aHere = alpha * (1 - occ);
+        if (aHere <= 0.012) { flush(); continue; }
+        if (!run.length) {
+          runAlpha = aHere;
+          run.push(px, py);
+        } else if (Math.abs(aHere - runAlpha) > 0.025) {
+          run.push(px, py);
+          flush();
+          runAlpha = aHere;
+          run.push(px, py);
+        } else {
+          run.push(px, py);
+        }
+      }
+      flush();
+      bctx.filter = "none";
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  /* ---------- star twinkles (back layer, scattered) ---------- */
+
+  const twinkles = [];
+  const TWINKLE_MAX = 18;
+  let twinkleTimer = rand(0.3, 1.0);
+
+  function spawnTwinkle(now) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const x = rand(W * 0.04, W * 0.96);
+      const y = rand(H * 0.05, H * 0.95);
+      if (pointNearUI(x, y, 16)) continue;
+      let inTree = false;
+      for (const tr of trees) {
+        if (x > tr.bbox.left - 12 && x < tr.bbox.right + 12 &&
+            y > tr.bbox.top - 12 && y < tr.bbox.bottom + 12) { inTree = true; break; }
+      }
+      if (inTree) continue;
+      // a newcomer landing within 1.5 radii of a neighbour doubles the
+      // neighbour instead of crowding it
+      for (const s of twinkles) {
+        if (Math.hypot(x - s.x, y - s.y) < s.size * 2.2 * 1.5) {
+          s.size = Math.min(s.size * 2, 7);
+          return;
+        }
+      }
+      twinkles.push({
+        x, y,
+        size: rand(1.4, 3),
+        born: now,
+        ttl: rand(4200, 9000),
+        tw: rand(0, TAU),
+        sp: rand(0.7, 1.6),
+        dim: 0
+      });
+      return;
+    }
+  }
+
+  function updateAndDrawTwinkles(dt, now) {
+    twinkleTimer -= dt;
+    if (twinkleTimer <= 0) {
+      twinkleTimer = rand(0.35, 1.1);
+      if (twinkles.length < TWINKLE_MAX) spawnTwinkle(now);
+    }
+    for (let i = twinkles.length - 1; i >= 0; i--) {
+      const s = twinkles[i];
+      const lp = (now - s.born) / s.ttl;
+      if (lp >= 1) { twinkles.splice(i, 1); continue; }
+      let a = lp < 0.22 ? lp / 0.22 : lp > 0.68 ? (1 - lp) / 0.32 : 1;
+      a *= 0.5 + 0.5 * Math.sin(now * 0.0012 * s.sp + s.tw); // slow flicker
+
+      const r = s.size * 2.2;
+      const near = pointNearUI(s.x, s.y, LAYER_PAD + r) ||
+        trees.some((tr) => tr.state !== "dissolving" &&
+          s.x > tr.bbox.left - LAYER_PAD - r && s.x < tr.bbox.right + LAYER_PAD + r &&
+          s.y > tr.bbox.top - LAYER_PAD - r && s.y < tr.bbox.bottom + LAYER_PAD + r);
+      const dim = easeDim(s, near, dt);
+      a *= 1 - 0.55 * dim;
+
+      bctx.filter = dim > 0.04 ? "blur(" + (dim * 2).toFixed(2) + "px)" : "none";
+      bctx.globalAlpha = Math.max(0, a * 0.85);
+      bctx.strokeStyle = pal.glint;
+      bctx.lineWidth = 0.9;
+      bctx.beginPath();
+      bctx.moveTo(s.x - r, s.y); bctx.lineTo(s.x + r, s.y);
+      bctx.moveTo(s.x, s.y - r); bctx.lineTo(s.x, s.y + r);
+      bctx.stroke();
+      bctx.fillStyle = pal.glint;
+      bctx.beginPath();
+      bctx.arc(s.x, s.y, s.size * 0.5, 0, TAU);
+      bctx.fill();
+      bctx.filter = "none";
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  /* ---------- piles (mid layer) ---------- */
 
   const piles = [];
 
   function makePile(x, y) {
-    const pile = { x, y, grains: [], acc: 0, state: "building", disperseAt: 0 };
+    const pile = { x, y, grains: [], acc: 0, state: "building", disperseAt: 0, dim: 0 };
     piles.push(pile);
     return pile;
   }
@@ -219,71 +513,167 @@
         if (!pile.grains.length || dp >= 1) { piles.splice(i, 1); continue; }
       }
 
+      const box = { left: pile.x - 24, right: pile.x + 24, top: pile.y - 20, bottom: pile.y + 8 };
+      const dim = easeDim(pile, boxNearUI(box, LAYER_PAD), dt);
+      alpha *= 1 - 0.55 * dim;
+
+      ctx.filter = dim > 0.04 ? "blur(" + (dim * 2).toFixed(2) + "px)" : "none";
       ctx.globalAlpha = alpha;
       for (const g of pile.grains) {
         ctx.fillStyle = g.color;
         ctx.fillRect(pile.x + g.dx - g.s / 2, pile.y + g.dy - g.s / 2, g.s, g.s);
       }
+      ctx.filter = "none";
       ctx.globalAlpha = 1;
     }
   }
 
-  /* ---------- lineage trees ---------- */
+  /* ---------- saguaro trees (mid layer) ----------
+     Every limb follows the same rule the reference draws: run straight
+     out at 90° from the parent line, round the corner smoothly, then
+     climb parallel to the parent. Only limbs whose upward run is long
+     enough earn a green tip; short stubs stay bare. */
 
   const trees = [];
+  const LEAF_MIN_V = 20;    // px of upward run a limb needs to leaf out
+
+  // point at arclength s along a limb's out-corner-up path (before sway)
+  function limbPoint(l, s) {
+    if (s <= l.hRun) return [l.ax + l.side * s, l.ay];
+    s -= l.hRun;
+    if (l.arc > 0 && s <= l.arc) {
+      const phi = s / l.r;
+      const cx = l.ax + l.side * l.hRun;
+      const cy = l.ay - l.r;
+      return [cx + l.side * l.r * Math.sin(phi), cy + l.r * Math.cos(phi)];
+    }
+    s -= l.arc;
+    return [l.ax + l.side * (l.hRun + l.r), l.ay - l.r - s];
+  }
+
+  function strokeLimbSpan(l, sA, sB, cosA, sinA, color, alpha) {
+    if (sB - sA < 0.6) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = l.w;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    const steps = Math.max(2, Math.ceil((sB - sA) / 2.5));
+    for (let i = 0; i <= steps; i++) {
+      const s = sA + ((sB - sA) * i) / steps;
+      const p = limbPoint(l, s);
+      const dx = p[0] - l.ax, dy = p[1] - l.ay;
+      ctx[i === 0 ? "moveTo" : "lineTo"](
+        l.ax + dx * cosA - dy * sinA,
+        l.ay + dx * sinA + dy * cosA
+      );
+    }
+    ctx.stroke();
+  }
 
   function buildTree(x, y, pile) {
-    const branches = [];
-    const maxDepth = 5 + (Math.random() < 0.45 ? 1 : 0);
-    const scale = rand(0.85, 1.2);
+    const scale = rand(0.9, 1.25);
+    const limbs = [];
 
-    function grow(parent, depth, angle, start) {
-      const len = depth === 0
-        ? rand(30, 40) * scale
-        : branches[parent].len * rand(0.66, 0.8);
-      const dur = 240 + len * 5;
-      const b = {
-        parent, depth, len,
-        baseAngle: angle,
-        curl: gauss() * 0.35,
-        start, dur,
-        isTip: true,
-        x1: x, y1: y
-      };
-      const idx = branches.push(b) - 1;
-      if (depth >= maxDepth) return idx;
-      // most lineages bifurcate; some end early (extinct lines)
-      if (depth >= 2 && Math.random() < 0.10 + depth * 0.045) return idx;
-      b.isTip = false;
-      const spread = rand(0.32, 0.5);
-      const wobble = gauss() * 0.1;
-      const childStart = start + dur * 0.8;
-      grow(idx, depth + 1, angle - spread * rand(0.55, 1.15) + wobble, childStart + rand(0, 90));
-      grow(idx, depth + 1, angle + spread * rand(0.55, 1.15) + wobble, childStart + rand(0, 90));
-      return idx;
+    function addLimb(l) {
+      l.arc = l.r * Math.PI / 2;
+      l.total = l.hRun + l.arc + l.vRun;
+      l.dur = 260 + l.total * 6;
+      l.leafLen = Math.min(rand(9, 14), l.vRun * 0.7);
+      l.hasLeaf = l.vRun >= LEAF_MIN_V;
+      l.swAmp = rand(0.004, 0.011);
+      l.swPh = rand(0, TAU);
+      l.x1 = l.ax; l.y1 = l.ay;
+      l.p = 0;
+      limbs.push(l);
+      return l;
     }
 
-    grow(-1, 0, -Math.PI / 2 + gauss() * 0.08, 0);
+    // trunk: one straight vertical line
+    const trunkV = rand(60, 92) * scale;
+    const trunk = addLimb({
+      ax: x, ay: y, side: 0, hRun: 0, r: 0, vRun: trunkV,
+      start: 0, w: 4.2 * scale
+    });
+
+    // arms sprout at spaced heights, mostly alternating sides
+    const nArms = 2 + ((Math.random() * 3) | 0);
+    let side = Math.random() < 0.5 ? 1 : -1;
+    const heights = [];
+    for (let i = 0; i < nArms; i++) heights.push(rand(trunkV * 0.22, trunkV * 0.8));
+    heights.sort((a, b) => a - b);
+    for (let i = 1; i < heights.length; i++) {
+      if (heights[i] - heights[i - 1] < 9) heights[i] = heights[i - 1] + 9;
+    }
+
+    for (const h of heights) {
+      if (h > trunkV * 0.85) continue;
+      const ay = y - h;
+      const hRun = rand(3, 12) * scale;
+      const r = rand(6, 13) * scale;
+      // arms usually crest just shy of the trunk top
+      const vCap = Math.max(4, ay - r - (y - trunkV) + rand(-14, 10));
+      let vRun = Math.min(vCap, rand(14, 60) * scale);
+      if (Math.random() < 0.25) vRun = rand(3, 9); // the odd bare stub
+      const arm = addLimb({
+        ax: x, ay, side, hRun, r, vRun,
+        start: trunk.dur * (h / trunkV) + rand(80, 260),
+        w: 3.6 * scale
+      });
+
+      // occasionally an arm grows its own smaller arm off its upward run
+      if (arm.vRun > 26 && Math.random() < 0.2) {
+        const sh = rand(arm.vRun * 0.25, arm.vRun * 0.6);
+        addLimb({
+          ax: arm.ax + arm.side * (arm.hRun + arm.r),
+          ay: arm.ay - arm.r - sh,
+          side: -arm.side,
+          hRun: rand(3, 9) * scale,
+          r: rand(5, 9) * scale,
+          vRun: rand(8, Math.max(10, sh + 6)),
+          start: arm.start + arm.dur * ((arm.hRun + arm.arc + sh) / arm.total) + rand(80, 200),
+          w: 3.1 * scale
+        });
+      }
+      side = Math.random() < 0.82 ? -side : side;
+    }
+
+    // final footprint (ignoring sway), used for all collision checks
+    let minX = x, maxX = x, minY = y - trunkV;
+    for (const l of limbs) {
+      const tipX = l.ax + l.side * (l.hRun + l.r);
+      minX = Math.min(minX, l.ax, tipX);
+      maxX = Math.max(maxX, l.ax, tipX);
+      minY = Math.min(minY, l.ay - l.r - l.vRun);
+    }
 
     let growTotal = 0;
-    for (const b of branches) growTotal = Math.max(growTotal, b.start + b.dur);
+    for (const l of limbs) growTotal = Math.max(growTotal, l.start + l.dur);
 
     return {
-      x, y, branches, growTotal, pile,
+      x, y, limbs, growTotal, pile,
+      bbox: { left: minX - 5, right: maxX + 5, top: minY - 5, bottom: y + 5 },
       born: performance.now(),
       ttl: rand(15000, 26000),
       state: "growing",
       dissolveStart: 0,
       phase: rand(0, TAU),
-      swayAmp: rand(0.005, 0.009)
+      dim: 0
     };
   }
 
   function seedTree(x, y, pile) {
-    // make room: crumble the oldest standing tree
+    const tree = buildTree(x, y, pile);
+    // a newcomer claims its ground: overlapping elders dissolve early
+    for (const other of trees) {
+      if (other.state !== "dissolving" && rectsOverlap(tree.bbox, other.bbox, 0)) {
+        startDissolve(other);
+      }
+    }
     const standing = trees.filter((t) => t.state !== "dissolving");
     if (standing.length >= MAX_TREES) startDissolve(standing[0]);
-    trees.push(buildTree(x, y, pile));
+    trees.push(tree);
   }
 
   function startDissolve(tree) {
@@ -311,56 +701,39 @@
         alpha = 1 - 0.45 * dp;
         // shed dust while crumbling
         if (Math.random() < 0.75) {
-          const b = pick(tree.branches);
-          if (b.p > 0.2) spawnDust(b.x1, b.y1, { g: -10, vy: -10, glintChance: 0.12, scale: 0.85 });
+          const l = pick(tree.limbs);
+          if (l.p > 0.2) spawnDust(l.x1, l.y1, { g: -10, vy: -10, glintChance: 0.12, scale: 0.85 });
         }
       } else {
         growClock = now - tree.born;
       }
 
-      for (const b of tree.branches) {
-        const sway = Math.sin(t * 0.9 + tree.phase + b.depth * 1.1 + b.baseAngle) * tree.swayAmp * b.depth;
-        const angle = b.baseAngle + sway;
+      // mid layer yields to the front layer
+      const dim = easeDim(tree, boxNearUI(tree.bbox, LAYER_PAD), dt);
+      alpha *= 1 - 0.5 * dim;
+      ctx.filter = dim > 0.04 ? "blur(" + (dim * 2.5).toFixed(2) + "px)" : "none";
 
-        let px, py;
-        if (b.parent < 0) { px = tree.x; py = tree.y; }
-        else { px = tree.branches[b.parent].x1; py = tree.branches[b.parent].y1; }
+      for (const l of tree.limbs) {
+        const p = clamp01((growClock - l.start) / l.dur);
+        l.p = p;
+        if (p <= 0) { l.x1 = l.ax; l.y1 = l.ay; continue; }
+        const s = l.total * easeOut(p);
 
-        const p = clamp01((growClock - b.start) / b.dur);
-        b.p = p;
-        if (p <= 0) { b.x1 = px; b.y1 = py; continue; }
+        const rot = Math.sin(t * 0.8 + tree.phase + l.swPh) * l.swAmp;
+        const cosA = Math.cos(rot), sinA = Math.sin(rot);
 
-        const ex = px + Math.cos(angle) * b.len;
-        const ey = py + Math.sin(angle) * b.len;
-        const mx = (px + ex) / 2 - Math.sin(angle) * b.curl * b.len * 0.35;
-        const my = (py + ey) / 2 + Math.cos(angle) * b.curl * b.len * 0.35;
-
-        // partial quadratic curve (de Casteljau) with ease-out growth
-        const e = p * (2 - p);
-        const ax = px + (mx - px) * e, ay = py + (my - py) * e;
-        const bx = mx + (ex - mx) * e, by = my + (ey - my) * e;
-        const qx = ax + (bx - ax) * e, qy = ay + (by - ay) * e;
-        b.x1 = qx; b.y1 = qy;
-
-        ctx.strokeStyle = b.depth >= 3 ? pal.branchTip : pal.branch;
-        ctx.globalAlpha = alpha * (b.depth === 0 ? 0.95 : 0.85);
-        ctx.lineWidth = Math.max(0.6, 3 * Math.pow(0.78, b.depth));
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.quadraticCurveTo(ax, ay, qx, qy);
-        ctx.stroke();
-
-        // taxa dots at living tips
-        if (b.isTip && p >= 1 && tree.state !== "dissolving") {
-          const nodeAge = clamp01((growClock - (b.start + b.dur)) / 350);
-          ctx.globalAlpha = alpha * 0.9 * nodeAge;
-          ctx.fillStyle = pal.node;
-          ctx.beginPath();
-          ctx.arc(qx, qy, 1.8 * nodeAge, 0, TAU);
-          ctx.fill();
+        const leafStart = l.hasLeaf ? l.total - l.leafLen : Infinity;
+        strokeLimbSpan(l, 0, Math.min(s, leafStart), cosA, sinA, pal.branch, alpha * 0.92);
+        if (s > leafStart) {
+          strokeLimbSpan(l, Math.max(0, leafStart - 1), s, cosA, sinA, pal.leaf, alpha * 0.95);
         }
+
+        const tip = limbPoint(l, s);
+        const dx = tip[0] - l.ax, dy = tip[1] - l.ay;
+        l.x1 = l.ax + dx * cosA - dy * sinA;
+        l.y1 = l.ay + dx * sinA + dy * cosA;
       }
+      ctx.filter = "none";
       ctx.globalAlpha = 1;
     }
   }
@@ -473,6 +846,27 @@
     }
   }
 
+  /* ---------- resize (debounced so dunes don't thrash mid-drag) ---------- */
+
+  let settleTimer = 0;
+  window.addEventListener("resize", () => {
+    resize();
+    refreshRects();
+    // dunes hold their ground during the drag (the dim rule hides any
+    // momentary overlap) and settle into new spots once the window rests
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      refreshRects();
+      for (const d of dunes) placeDune(d);
+    }, 250);
+  });
+
+  // seed the field right away so the first breaths don't wait a full cycle
+  window.addEventListener("load", () => {
+    refreshRects();
+    for (const d of dunes) placeDune(d);
+  });
+
   /* ---------- main loop ---------- */
 
   let last = performance.now();
@@ -483,9 +877,21 @@
     if (dt > 0.05) dt = 0.05;
 
     ctx.clearRect(0, 0, W, H);
+    bctx.clearRect(0, 0, W, H);
+
+    // entrance animations and font loading shift the text early on,
+    // so the keep-clear zones are re-measured on a slow tick
+    rectTimer -= dt;
+    if (rectTimer <= 0) { rectTimer = 2; refreshRects(); }
 
     updateDwell(dt, now);
+
+    // back layer
+    updateAndDrawDunes(dt, now);
     updateAndDrawMotes(dt, now);
+    updateAndDrawTwinkles(dt, now);
+
+    // mid layer
     updateAndDrawPiles(dt, now);
     updateAndDrawTrees(dt, now);
     updateAndDrawParticles(dt, now);

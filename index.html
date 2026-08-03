@@ -19,8 +19,7 @@
             .eyebrow {
                 margin: 0;
                 font-size: clamp(0.9rem, 2vw, 1.05rem);
-                letter-spacing: 0.22em;
-                text-transform: uppercase;
+                letter-spacing: 0.14em;
                 color: var(--ink-soft);
             }
 
@@ -111,11 +110,12 @@
         </style>
     </head>
     <body>
+        <canvas id="spice-back" aria-hidden="true"></canvas>
         <canvas id="spice" aria-hidden="true"></canvas>
 
         <main>
             <div>
-                <p class="eyebrow">lilliantara.com</p>
+                <p class="eyebrow">LillianTara.com</p>
                 <h1>Demos<span class="period">.</span></h1>
             </div>
 
@@ -141,7 +141,7 @@
             </div>
         </main>
 
-        <script src="js/spice.js" defer></script>
+        <script src="js/spice.js?v=3" defer></script>
         <script>
             (() => {
                 const root = document.documentElement;

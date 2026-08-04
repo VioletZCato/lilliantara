@@ -74,38 +74,12 @@
                 color: var(--ink-soft);
             }
 
-            .themes {
-                display: inline-flex;
-                padding: 0.28rem;
-                border: 1px solid var(--line);
-                border-radius: 999px;
-                background: var(--btn-bg);
-            }
-
-            .themes button {
-                padding: 0.42em 1.15em;
-                border: 0;
-                border-radius: 999px;
-                background: none;
-                font: inherit;
-                font-size: 0.95rem;
-                letter-spacing: 0.1em;
-                text-transform: uppercase;
-                color: var(--ink-soft);
-                cursor: pointer;
-                transition: background 0.3s ease, color 0.3s ease;
-            }
-
-            .themes button:hover { color: var(--ink); }
-
-            .themes button[aria-pressed="true"] {
-                background: var(--cinnamon);
-                color: var(--contact-ink);
-            }
-
-            .themes button:focus-visible {
-                outline: 2px solid var(--cinnamon);
-                outline-offset: 3px;
+            /* the segmented controls themselves live in default.css */
+            .switches {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: clamp(0.6rem, 1.6vh, 0.9rem);
             }
         </style>
     </head>
@@ -134,41 +108,22 @@
                 </a>
             </nav>
 
-            <div class="themes" role="group" aria-label="Theme">
-                <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
-                <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
-                <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+            <div class="switches">
+                <div class="seg" role="group" aria-label="Theme">
+                    <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+                    <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+                    <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+                </div>
+
+                <div class="seg" role="group" aria-label="Tree animation">
+                    <button type="button" data-tree-set="legacy-v2" aria-pressed="false">Legacy (v2)</button>
+                    <button type="button" data-tree-set="phylo-v4" aria-pressed="true">Phylo (v4)</button>
+                    <button type="button" data-tree-set="lively-v5" aria-pressed="false">Lively (v5)</button>
+                </div>
             </div>
         </main>
 
         <script src="js/spice.js?v=4" defer></script>
-        <script>
-            (() => {
-                const root = document.documentElement;
-                const buttons = document.querySelectorAll("[data-theme-set]");
-
-                function apply(choice) {
-                    if (choice === "dark" || choice === "light") {
-                        root.dataset.theme = choice;
-                        try { localStorage.setItem("lt-theme", choice); } catch (e) {}
-                    } else {
-                        choice = "auto";
-                        delete root.dataset.theme;
-                        try { localStorage.removeItem("lt-theme"); } catch (e) {}
-                    }
-                    for (const b of buttons) {
-                        b.setAttribute("aria-pressed", String(b.dataset.themeSet === choice));
-                    }
-                }
-
-                for (const b of buttons) {
-                    b.addEventListener("click", () => apply(b.dataset.themeSet));
-                }
-
-                let stored = null;
-                try { stored = localStorage.getItem("lt-theme"); } catch (e) {}
-                apply(stored || "auto");
-            })();
-        </script>
+        <script src="js/controls.js?v=4" defer></script>
     </body>
 </html>

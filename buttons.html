@@ -18,6 +18,23 @@
         <canvas id="spice-back" aria-hidden="true"></canvas>
         <canvas id="spice" aria-hidden="true"></canvas>
 
+        <a class="back" href="index.html" aria-label="Back to demos">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6"/></svg>
+        </a>
+
+        <div class="site-controls">
+            <div class="seg seg--mini" role="group" aria-label="Theme">
+                <button type="button" data-theme-set="auto" aria-pressed="true" title="Auto"><span class="glyph">◑</span><span class="sr-only">Auto</span></button>
+                <button type="button" data-theme-set="light" aria-pressed="false" title="Light"><span class="glyph">☼</span><span class="sr-only">Light</span></button>
+                <button type="button" data-theme-set="dark" aria-pressed="false" title="Dark"><span class="glyph">☽</span><span class="sr-only">Dark</span></button>
+            </div>
+            <div class="seg seg--mini" role="group" aria-label="Tree animation">
+                <button type="button" data-tree-set="legacy-v2" aria-pressed="false" title="Legacy (v2)">v2<span class="sr-only"> — Legacy</span></button>
+                <button type="button" data-tree-set="phylo-v4" aria-pressed="true" title="Phylo (v4)">v4<span class="sr-only"> — Phylo</span></button>
+                <button type="button" data-tree-set="lively-v5" aria-pressed="false" title="Lively (v5)">v5<span class="sr-only"> — Lively</span></button>
+            </div>
+        </div>
+
         <main>
             <h1 class="quote-title">If they seek to bind me<span class="period">,</span><br>let them be deprived of<br>the fruits of my wilderness<span class="period">.</span></h1>
 
@@ -37,5 +54,6 @@
         </main>
 
         <script src="js/spice.js?v=4" defer></script>
+        <script src="js/controls.js?v=4" defer></script>
     </body>
 </html>

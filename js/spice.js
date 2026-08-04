@@ -1,8 +1,12 @@
 /* ============================================================
-   spice.js — three layers of desert ambience (v4)
+   spice.js — three layers of desert ambience (v5)
      back  (#spice-back): shaded dunes, star twinkles, motes
-     mid   (#spice):      cursor dust, dwell piles, saguaro trees
-     front (DOM):         the page's own text and buttons
+     mid   (#spice):      cursor dust, dwell piles, trees
+     front (DOM):         the page's own text, buttons, controls
+   Tree animations (switchable, persisted as "lt-trees"):
+     legacy-v2  bifurcating lineage tree, ported from v2
+     phylo-v4   saguaro with one canopy line, green leaf balls  [default]
+     lively-v5  phylo-v4 plus red leaf balls on dead-end limbs
    Collision rules:
      across layers — the deeper element blurs and fades when it
        comes within 10px of something on a nearer layer;
@@ -39,9 +43,11 @@
     light: {
       dust: ["#b4561f", "#c96b2a", "#8a4a1f", "#d98e4a", "#6e3d1b", "#c05a1e"],
       glint: "#e8934a",
-      branch: "#d98a45",   // matched to the dark-mode branch orange
+      branch: "#d98a45",
       leaf: "#b4ff4b",
+      leafDead: "#c8481a",     // spent leaves on dead-end limbs
       dune: "#7d6b3e",
+      duneRGB: "125, 107, 62",
       mote: "rgba(140, 90, 45,",
       particleComposite: "source-over"
     },
@@ -50,7 +56,9 @@
       glint: "#ffe0b0",
       branch: "#d98a45",
       leaf: "#a7e14e",
+      leafDead: "#e2622c",     // lifted so it reads against the night ground
       dune: "#8a744a",
+      duneRGB: "138, 116, 74",
       mote: "rgba(240, 180, 110,",
       particleComposite: "lighter"
     }
@@ -58,12 +66,13 @@
 
   const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
   let pal = PALETTES.light;
-  // honour the site's own theme override (index.html writes data-theme)
+  let isDark = false;
+  // honour the site's own theme override (the controls write data-theme)
   // before falling back to the OS preference
   function computePal() {
     const forced = document.documentElement.dataset.theme;
-    const dark = forced === "dark" || (forced !== "light" && darkMq.matches);
-    pal = dark ? PALETTES.dark : PALETTES.light;
+    isDark = forced === "dark" || (forced !== "light" && darkMq.matches);
+    pal = isDark ? PALETTES.dark : PALETTES.light;
   }
   computePal();
   if (darkMq.addEventListener) darkMq.addEventListener("change", computePal);
@@ -73,15 +82,15 @@
 
   /* ---------- sizing ---------- */
 
-  let W = 0, H = 0;
+  let W = 0, H = 0, DPR = 1;
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth;
     H = window.innerHeight;
     for (const [cv, c] of [[midCanvas, ctx], [backCanvas, bctx]]) {
-      cv.width = W * dpr;
-      cv.height = H * dpr;
-      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cv.width = W * DPR;
+      cv.height = H * DPR;
+      c.setTransform(DPR, 0, 0, DPR, 0, 0);
     }
   }
   resize();
@@ -109,6 +118,41 @@
     return obj.dim;
   }
 
+  /* Blur radii are quantised to 1/4 px. Canvas filters are cached by
+     string, so an ever-changing radius churns the cache and makes
+     strokes flicker; a handful of distinct strings does not. */
+  function blurStr(px) {
+    return "blur(" + (Math.round(px * 4) / 4).toFixed(2) + "px)";
+  }
+
+  /* Offscreen scratch buffer. Blurring a shape made of many overlapping
+     strokes one stroke at a time double-blends every seam (the visible
+     "flicker" on blurred trees); rendering the whole thing once and
+     blurring the finished image fixes that and costs one filter op. */
+  const buf = document.createElement("canvas");
+  const bufCtx = buf.getContext("2d");
+
+  function drawBlurred(box, pad, blurPx, alpha, drawFn) {
+    const bx = Math.floor(box.left - pad), by = Math.floor(box.top - pad);
+    const bw = Math.ceil(box.right - box.left + pad * 2);
+    const bh = Math.ceil(box.bottom - box.top + pad * 2);
+    if (bw <= 0 || bh <= 0) return;
+    const pw = Math.ceil(bw * DPR), ph = Math.ceil(bh * DPR);
+    if (buf.width < pw || buf.height < ph) {
+      buf.width = Math.max(buf.width, pw);
+      buf.height = Math.max(buf.height, ph);
+    }
+    bufCtx.setTransform(1, 0, 0, 1, 0, 0);
+    bufCtx.clearRect(0, 0, buf.width, buf.height);
+    bufCtx.setTransform(DPR, 0, 0, DPR, -bx * DPR, -by * DPR);
+    drawFn(bufCtx, 1);
+    ctx.save();
+    ctx.filter = blurStr(blurPx);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(buf, 0, 0, pw, ph, bx, by, pw / DPR, ph / DPR);
+    ctx.restore();
+  }
+
   /* ---------- boot / resize gating ----------
      The page opens on a clear background; ambient elements (dunes,
      stars, motes, trees) only begin appearing once this clock passes. */
@@ -124,7 +168,8 @@
 
   function refreshRects() {
     uiRects = [];
-    const els = document.querySelectorAll("main h1, main p, main a, main .themes");
+    const els = document.querySelectorAll(
+      "main h1, main p, main a, main .seg, .site-controls, .back");
     for (const el of els) {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) continue;
@@ -227,8 +272,9 @@
 
   /* ---------- ambient motes (back layer, barely-there drift) ---------- */
 
+  const MOTE_COUNT = 22;   // 12 * 1.8
   const motes = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < MOTE_COUNT; i++) {
     motes.push({
       x: Math.random() * 2000,
       y: Math.random() * 1500,
@@ -256,9 +302,15 @@
     }
   }
 
-  /* ---------- dunes (back layer: shaded ridge lines) ---------- */
+  /* ---------- dunes (back layer: shaded ridges) ----------
+     A dune is a ridge line plus a shadow on its windward (left) flank.
+     The shadow is bounded by the left flank above, the dune's base line
+     below, and — on its right — a curve that leaves the crest heading
+     straight down and sweeps left into the base. Line and shadow share
+     one colour and one vertical gradient, so both fade out into the
+     background along the bottom while the crest stays crisp. */
 
-  const DUNE_CYCLE = 8000;
+  const DUNE_CYCLE = 12000;
   const DUNES_PER_SIDE = 3;
   const dunes = [];
 
@@ -297,7 +349,7 @@
     return d.y - d.h * ridgeRise(d, t);
   }
 
-  // is this point behind any nearer (lower-baseline) active dune?
+  // strongest cover from any nearer (lower-baseline) dune at this point
   function duneOcclusion(d, px, py) {
     let occ = 0;
     for (const o of dunes) {
@@ -306,6 +358,15 @@
       if (py > ridgeYat(o, px) - 1.2) occ = Math.max(occ, Math.min(1, o.fade * 1.4));
     }
     return occ;
+  }
+
+  // y of the shadow's inner (right) boundary at x, for x in [xc, peakX]
+  function shadowInnerY(d, x) {
+    const span = d.peakX - d.shX;
+    if (span <= 0) return d.y;
+    const t = Math.sqrt(clamp01((d.peakX - x) / span));
+    const u = 1 - t;
+    return d.y + (d.peakY - d.y) * u * u;
   }
 
   function placeDune(d) {
@@ -334,12 +395,116 @@
       if (boxNearUI(box, 18)) continue;
       d.x = x; d.y = y; d.w = w; d.h = h;
       d.peakT = rand(0.45, 0.72);
-      d.tau = h * rand(0.42, 0.55); // shadow depth at the windward tail
+      d.peakX = x + d.peakT * w;
+      d.peakY = y - h;
+      // how far back toward the tail the shadow's inner curve reaches
+      d.shX = d.peakX - rand(0.52, 0.74) * (d.peakX - x);
       d.box = box;
       makeRidge(d);
       d.active = true;
       return;
     }
+  }
+
+  function duneGradient(d, alpha) {
+    // opaque through the upper half, easing to nothing at the base line
+    const g = bctx.createLinearGradient(0, d.peakY, 0, d.y + 1);
+    const c = pal.duneRGB;
+    const at = (v) => "rgba(" + c + "," + (alpha * v).toFixed(3) + ")";
+    // eased rather than piecewise-linear, so the ramp has no visible
+    // shoulder where the hold ends
+    g.addColorStop(0, at(1));
+    g.addColorStop(0.45, at(1));
+    g.addColorStop(0.62, at(0.92));
+    g.addColorStop(0.78, at(0.68));
+    g.addColorStop(0.9, at(0.36));
+    g.addColorStop(1, at(0));
+    return g;
+  }
+
+  function drawDuneShadow(d) {
+    // walk the flank in columns; each column runs from the ridge down to
+    // the base (or to the inner curve, past the curve's foot)
+    const step = 2;
+    const runs = [];
+    let cur = null;
+    for (let x = d.x + 0.5; x <= d.peakX; x += step) {
+      const top = ridgeYat(d, x);
+      if (!isFinite(top)) { cur = null; continue; }
+      let bot = x <= d.shX ? d.y : shadowInnerY(d, x);
+      if (bot - top < 0.3) { cur = null; continue; }
+
+      // a nearer dune in front cuts this column off at its ridge
+      let occ = 0, cutY = Infinity;
+      for (const o of dunes) {
+        if (o === d || !o.active || o.fade <= 0.03 || o.y <= d.y) continue;
+        const oy = ridgeYat(o, x);
+        if (!isFinite(oy)) continue;
+        const strength = Math.min(1, o.fade * 1.4);
+        if (bot > oy - 1.2 && strength > occ) { occ = strength; cutY = oy - 1.2; }
+      }
+      let aMul = 1;
+      if (occ >= 0.5) {
+        if (top >= cutY) { cur = null; continue; }   // wholly hidden
+        bot = Math.min(bot, cutY);
+      } else if (occ > 0) {
+        aMul = 1 - occ;
+      }
+      if (bot - top < 0.3) { cur = null; continue; }
+
+      const bucket = Math.round(aMul * 20);
+      if (!cur || cur.bucket !== bucket) {
+        cur = { bucket, aMul, cols: [] };
+        runs.push(cur);
+      }
+      cur.cols.push(x, top, bot);
+    }
+
+    for (const run of runs) {
+      const c = run.cols;
+      if (c.length < 6) continue;
+      bctx.globalAlpha = run.aMul;
+      bctx.beginPath();
+      bctx.moveTo(c[0], c[1]);
+      for (let i = 3; i < c.length; i += 3) bctx.lineTo(c[i], c[i + 1]);
+      for (let i = c.length - 3; i >= 0; i -= 3) bctx.lineTo(c[i], c[i + 2]);
+      bctx.closePath();
+      bctx.fill();
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  function drawDuneLine(d) {
+    let run = [];
+    let runAlpha = 1;
+    const flush = () => {
+      if (run.length >= 4) {
+        bctx.globalAlpha = runAlpha;
+        bctx.beginPath();
+        bctx.moveTo(run[0], run[1]);
+        for (let k = 2; k < run.length; k += 2) bctx.lineTo(run[k], run[k + 1]);
+        bctx.stroke();
+      }
+      run = [];
+    };
+    for (let i = 0; i < d.pts.length; i += 2) {
+      const px = d.pts[i], py = d.pts[i + 1];
+      const aHere = 1 - duneOcclusion(d, px, py);
+      if (aHere <= 0.02) { flush(); continue; }
+      if (!run.length) {
+        runAlpha = aHere;
+        run.push(px, py);
+      } else if (Math.abs(aHere - runAlpha) > 0.05) {
+        run.push(px, py);
+        flush();
+        runAlpha = aHere;
+        run.push(px, py);
+      } else {
+        run.push(px, py);
+      }
+    }
+    flush();
+    bctx.globalAlpha = 1;
   }
 
   function updateAndDrawDunes(dt, now) {
@@ -365,81 +530,19 @@
       const near = boxNearUI(d.box, LAYER_PAD) ||
         trees.some((tr) => tr.state !== "dissolving" && rectsOverlap(d.box, tr.bbox, LAYER_PAD));
       const dim = easeDim(d, near, dt);
-      const alpha = 0.5 * d.fade * (1 - 0.55 * dim);
+      const alpha = 0.85 * d.fade * (1 - 0.55 * dim);
       if (alpha <= 0.012) continue;
 
-      bctx.filter = dim > 0.04 ? "blur(" + (dim * 2.2).toFixed(2) + "px)" : "none";
-      const N = (d.pts.length >> 1) - 1;
-
-      // --- left-flank shadow: a filled wedge, thickest at the tail,
-      //     tapering to nothing at the crest; cut where a nearer dune
-      //     covers it, same as the ridge line ---
-      const peakI = Math.max(1, Math.round(d.peakT * N));
-      bctx.fillStyle = pal.dune;
-      let top = [], bot = [], runA = 0;
-      const flushFill = () => {
-        if (top.length >= 4) {
-          bctx.globalAlpha = runA;
-          bctx.beginPath();
-          bctx.moveTo(top[0], top[1]);
-          for (let k = 2; k < top.length; k += 2) bctx.lineTo(top[k], top[k + 1]);
-          for (let k = bot.length - 2; k >= 0; k -= 2) bctx.lineTo(bot[k], bot[k + 1]);
-          bctx.closePath();
-          bctx.fill();
-        }
-        top = []; bot = [];
-      };
-      for (let i = 0; i <= peakI; i++) {
-        const px = d.pts[i * 2], py = d.pts[i * 2 + 1];
-        const tau = d.tau * Math.pow(1 - i / peakI, 1.15);
-        const ly = Math.min(py + tau, d.y + 2);
-        const aHere = alpha * (1 - duneOcclusion(d, px, py));
-        if (aHere <= 0.012) { flushFill(); continue; }
-        if (!top.length) {
-          runA = aHere;
-        } else if (Math.abs(aHere - runA) > 0.03) {
-          top.push(px, py); bot.push(px, ly);
-          flushFill();
-          runA = aHere;
-        }
-        top.push(px, py); bot.push(px, ly);
-      }
-      flushFill();
-
-      // --- ridge line, drawn over the shadow ---
-      bctx.strokeStyle = pal.dune;
+      bctx.filter = dim > 0.04 ? blurStr(dim * 2.2) : "none";
+      const grad = duneGradient(d, alpha);
+      bctx.fillStyle = grad;
+      bctx.strokeStyle = grad;
       bctx.lineWidth = 2.6;
       bctx.lineCap = "round";
       bctx.lineJoin = "round";
-      let run = [];
-      let runAlpha = 0;
-      const flush = () => {
-        if (run.length >= 4) {
-          bctx.globalAlpha = runAlpha;
-          bctx.beginPath();
-          bctx.moveTo(run[0], run[1]);
-          for (let k = 2; k < run.length; k += 2) bctx.lineTo(run[k], run[k + 1]);
-          bctx.stroke();
-        }
-        run = [];
-      };
-      for (let i = 0; i <= N; i++) {
-        const px = d.pts[i * 2], py = d.pts[i * 2 + 1];
-        const aHere = alpha * (1 - duneOcclusion(d, px, py));
-        if (aHere <= 0.012) { flush(); continue; }
-        if (!run.length) {
-          runAlpha = aHere;
-          run.push(px, py);
-        } else if (Math.abs(aHere - runAlpha) > 0.025) {
-          run.push(px, py);
-          flush();
-          runAlpha = aHere;
-          run.push(px, py);
-        } else {
-          run.push(px, py);
-        }
-      }
-      flush();
+
+      drawDuneShadow(d);
+      drawDuneLine(d);
       bctx.filter = "none";
     }
     bctx.globalAlpha = 1;
@@ -448,8 +551,8 @@
   /* ---------- star twinkles (back layer, scattered) ---------- */
 
   const twinkles = [];
-  const TWINKLE_MAX = 18;
-  let twinkleTimer = rand(0.3, 1.0);
+  const TWINKLE_MAX = 32;   // 18 * 1.8
+  let twinkleTimer = rand(0.2, 0.6);
 
   function spawnTwinkle(now) {
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -486,7 +589,7 @@
   function updateAndDrawTwinkles(dt, now) {
     twinkleTimer -= dt;
     if (twinkleTimer <= 0) {
-      twinkleTimer = rand(0.35, 1.1);
+      twinkleTimer = rand(0.2, 0.6);
       if (now >= ambientAt && twinkles.length < TWINKLE_MAX) spawnTwinkle(now);
     }
     for (let i = twinkles.length - 1; i >= 0; i--) {
@@ -504,7 +607,7 @@
       const dim = easeDim(s, near, dt);
       a *= 1 - 0.55 * dim;
 
-      bctx.filter = dim > 0.04 ? "blur(" + (dim * 2).toFixed(2) + "px)" : "none";
+      bctx.filter = dim > 0.04 ? blurStr(dim * 2) : "none";
       bctx.globalAlpha = Math.max(0, a * 0.85);
       bctx.strokeStyle = pal.glint;
       bctx.lineWidth = 0.9;
@@ -574,7 +677,7 @@
       const dim = easeDim(pile, boxNearUI(box, LAYER_PAD), dt);
       alpha *= 1 - 0.55 * dim;
 
-      ctx.filter = dim > 0.04 ? "blur(" + (dim * 2).toFixed(2) + "px)" : "none";
+      ctx.filter = dim > 0.04 ? blurStr(dim * 2) : "none";
       ctx.globalAlpha = alpha;
       for (const g of pile.grains) {
         ctx.fillStyle = g.color;
@@ -585,7 +688,31 @@
     }
   }
 
-  /* ---------- saguaro trees (mid layer, v4) ----------
+  /* ============================================================
+     TREES (mid layer) — three interchangeable animations
+     ============================================================ */
+
+  const TREE_MODES = ["legacy-v2", "phylo-v4", "lively-v5"];
+  const TREE_DEFAULT = "phylo-v4";
+  const trees = [];
+
+  let treeMode = TREE_DEFAULT;
+  try {
+    const stored = localStorage.getItem("lt-trees");
+    if (TREE_MODES.indexOf(stored) >= 0) treeMode = stored;
+  } catch (e) {}
+
+  function setTreeMode(mode) {
+    if (TREE_MODES.indexOf(mode) < 0 || mode === treeMode) return;
+    treeMode = mode;
+    // clear the field first: every standing tree crumbles away before
+    // the next dwell grows one in the new style
+    for (const tree of trees) startDissolve(tree);
+  }
+
+  window.addEventListener("lt-tree-mode", (e) => setTreeMode(e.detail));
+
+  /* ---------- phylo-v4 / lively-v5: saguaro with one canopy line ----------
      Geometry rules, per the reference:
      - one straight trunk climbing to a single canopy line;
      - arms sprout out at 90°, round a smooth corner, climb parallel;
@@ -596,9 +723,8 @@
        of at least one branch width between parallel branches;
      - every branch either dead-ends clearly below the canopy line, or
        reaches it and sprouts a green leaf ball; leaf balls are wider
-       than the branches yet can never touch (slot spacing > diameter). */
-
-  const trees = [];
+       than the branches yet can never touch (slot spacing > diameter).
+     lively-v5 adds a smaller red ball on each dead-end limb. */
 
   // point at arclength s along a limb's out-corner-up path (before sway)
   function limbPoint(l, s) {
@@ -614,34 +740,35 @@
     return [l.ax + l.side * (l.hRun + l.r), l.ay - l.r - s];
   }
 
-  function strokeLimbSpan(l, sA, sB, cosA, sinA, alpha) {
+  function strokeLimbSpan(c, l, sA, sB, cosA, sinA, alpha, boost) {
     if (sB - sA < 0.6) return;
-    ctx.strokeStyle = pal.branch;
-    ctx.lineWidth = l.w;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
+    c.strokeStyle = pal.branch;
+    c.lineWidth = l.w + (boost || 0);
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    c.globalAlpha = alpha;
+    c.beginPath();
     const steps = Math.max(2, Math.ceil((sB - sA) / 2.5));
     for (let i = 0; i <= steps; i++) {
       const s = sA + ((sB - sA) * i) / steps;
       const p = limbPoint(l, s);
       const dx = p[0] - l.ax, dy = p[1] - l.ay;
-      ctx[i === 0 ? "moveTo" : "lineTo"](
+      c[i === 0 ? "moveTo" : "lineTo"](
         l.ax + dx * cosA - dy * sinA,
         l.ay + dx * sinA + dy * cosA
       );
     }
-    ctx.stroke();
+    c.stroke();
   }
 
-  function buildTree(x, y, pile) {
+  function buildSaguaro(x, y, pile, kind) {
     const scale = rand(0.9, 1.2);
     const w = 3.8 * scale;             // uniform branch width
     const slotGap = 3.2 * w;           // centre spacing of vertical lines
     const treeH = rand(72, 100) * scale;
     const canopyY = y - treeH;
     const leafR = w * rand(1.05, 1.2); // ball diameter 2.1–2.4 widths
+    const deadR = leafR * 0.8;         // spent leaves: a little smaller
     const limbs = [];
 
     function addLimb(l) {
@@ -660,7 +787,7 @@
     // trunk always reaches the canopy and leafs out
     const trunk = addLimb({
       ax: x, ay: y, side: 0, hRun: 0, r: 0, vRun: treeH,
-      start: 0, leaf: true, leafR
+      start: 0, leaf: true, leafR, deadR
     });
 
     // queue arms outermost-first per side, interleaving sides, and hand
@@ -685,14 +812,14 @@
       if (climb >= 2 * w) {
         let vRun = climb, leaf = true;
         if (Math.random() < 0.3) {
-          // dead end: stop clearly below the canopy line, no leaf
+          // dead end: stop clearly below the canopy line
           const stop = climb - Math.max(leafR * 3, climb * rand(0.25, 0.5));
           if (stop >= 2 * w) { vRun = stop; leaf = false; }
         }
         addLimb({
           ax: x, ay: y - h, side, hRun, r, vRun,
           start: trunk.dur * (h / treeH) + rand(80, 240),
-          leaf, leafR
+          leaf, leafR, deadR
         });
       }
       h += rand(2.8 * w, 4.2 * w);
@@ -710,7 +837,7 @@
     for (const l of limbs) growTotal = Math.max(growTotal, l.start + l.dur);
 
     return {
-      x, y, limbs, growTotal, pile,
+      kind, x, y, limbs, growTotal, pile,
       bbox: { left: minX - 4, right: maxX + 4, top: canopyY - 2 * leafR - 4, bottom: y + 4 },
       born: performance.now(),
       ttl: rand(15000, 26000),
@@ -721,8 +848,167 @@
     };
   }
 
-  function seedTree(x, y, pile) {
-    const tree = buildTree(x, y, pile);
+  function drawSaguaro(tree, c, growClock, aMul, t, boost) {
+    const deadLeaves = tree.kind === "lively-v5";
+    for (const l of tree.limbs) {
+      const p = clamp01((growClock - l.start) / l.dur);
+      l.p = p;
+      if (p <= 0) { l.x1 = l.ax; l.y1 = l.ay; continue; }
+      const s = l.total * easeOut(p);
+
+      const rot = Math.sin(t * 0.8 + tree.phase + l.swPh) * l.swAmp;
+      const cosA = Math.cos(rot), sinA = Math.sin(rot);
+
+      strokeLimbSpan(c, l, 0, s, cosA, sinA, aMul * 0.92, boost);
+
+      const tip = limbPoint(l, s);
+      const dx = tip[0] - l.ax, dy = tip[1] - l.ay;
+      l.x1 = l.ax + dx * cosA - dy * sinA;
+      l.y1 = l.ay + dx * sinA + dy * cosA;
+
+      // a ball pops once the limb has finished growing: green at the
+      // canopy line, red where a dead-end limb gave up (v5 only)
+      const wantsBall = l.leaf || (deadLeaves && !l.leaf);
+      if (wantsBall) {
+        const age = clamp01((growClock - (l.start + l.dur)) / 320);
+        if (age > 0) {
+          const R = (l.leaf ? l.leafR : l.deadR) + (boost || 0) * 0.5;
+          c.globalAlpha = aMul * 0.95 * age;
+          c.fillStyle = l.leaf ? pal.leaf : pal.leafDead;
+          c.beginPath();
+          c.arc(l.x1, l.y1 - R * 0.45, R * easeOut(age), 0, TAU);
+          c.fill();
+        }
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  /* ---------- legacy-v2: bifurcating lineage tree ----------
+     Ported from the v2 script. The generator and its curved, tapering
+     branches are unchanged; only the parts needed to live alongside the
+     current code were touched — the shared branch/leaf colours, a
+     precomputed bbox so the blur and collision rules can see it, and
+     the current seeding/dissolve timings. */
+
+  function buildLineage(x, y, pile, kind) {
+    const branches = [];
+    const maxDepth = 5 + (Math.random() < 0.45 ? 1 : 0);
+    const scale = rand(0.85, 1.2);
+
+    function grow(parent, depth, angle, start) {
+      const len = depth === 0
+        ? rand(30, 40) * scale
+        : branches[parent].len * rand(0.66, 0.8);
+      const dur = 240 + len * 5;
+      const b = {
+        parent, depth, len,
+        baseAngle: angle,
+        curl: gauss() * 0.35,
+        start, dur,
+        isTip: true,
+        x1: x, y1: y
+      };
+      const idx = branches.push(b) - 1;
+      if (depth >= maxDepth) return idx;
+      // most lineages bifurcate; some end early (extinct lines)
+      if (depth >= 2 && Math.random() < 0.10 + depth * 0.045) return idx;
+      b.isTip = false;
+      const spread = rand(0.32, 0.5);
+      const wobble = gauss() * 0.1;
+      const childStart = start + dur * 0.8;
+      grow(idx, depth + 1, angle - spread * rand(0.55, 1.15) + wobble, childStart + rand(0, 90));
+      grow(idx, depth + 1, angle + spread * rand(0.55, 1.15) + wobble, childStart + rand(0, 90));
+      return idx;
+    }
+
+    grow(-1, 0, -Math.PI / 2 + gauss() * 0.08, 0);
+
+    let growTotal = 0;
+    for (const b of branches) growTotal = Math.max(growTotal, b.start + b.dur);
+
+    // rest-pose tip positions give the footprint the layer rules need
+    let minX = x, maxX = x, minY = y, maxY = y;
+    for (const b of branches) {
+      const px = b.parent < 0 ? x : branches[b.parent].nx;
+      const py = b.parent < 0 ? y : branches[b.parent].ny;
+      b.nx = px + Math.cos(b.baseAngle) * b.len;
+      b.ny = py + Math.sin(b.baseAngle) * b.len;
+      minX = Math.min(minX, b.nx); maxX = Math.max(maxX, b.nx);
+      minY = Math.min(minY, b.ny); maxY = Math.max(maxY, b.ny);
+    }
+
+    return {
+      kind, x, y, branches, growTotal, pile,
+      bbox: { left: minX - 8, right: maxX + 8, top: minY - 8, bottom: Math.max(maxY, y) + 6 },
+      born: performance.now(),
+      ttl: rand(15000, 26000),
+      state: "growing",
+      dissolveStart: 0,
+      phase: rand(0, TAU),
+      swayAmp: rand(0.005, 0.009),
+      dim: 0
+    };
+  }
+
+  function drawLineage(tree, c, growClock, aMul, t, boost) {
+    for (const b of tree.branches) {
+      const sway = Math.sin(t * 0.9 + tree.phase + b.depth * 1.1 + b.baseAngle) * tree.swayAmp * b.depth;
+      const angle = b.baseAngle + sway;
+
+      let px, py;
+      if (b.parent < 0) { px = tree.x; py = tree.y; }
+      else { px = tree.branches[b.parent].x1; py = tree.branches[b.parent].y1; }
+
+      const p = clamp01((growClock - b.start) / b.dur);
+      b.p = p;
+      if (p <= 0) { b.x1 = px; b.y1 = py; continue; }
+
+      const ex = px + Math.cos(angle) * b.len;
+      const ey = py + Math.sin(angle) * b.len;
+      const mx = (px + ex) / 2 - Math.sin(angle) * b.curl * b.len * 0.35;
+      const my = (py + ey) / 2 + Math.cos(angle) * b.curl * b.len * 0.35;
+
+      // partial quadratic curve (de Casteljau) with ease-out growth
+      const e = p * (2 - p);
+      const ax = px + (mx - px) * e, ay = py + (my - py) * e;
+      const bx = mx + (ex - mx) * e, by = my + (ey - my) * e;
+      const qx = ax + (bx - ax) * e, qy = ay + (by - ay) * e;
+      b.x1 = qx; b.y1 = qy;
+
+      c.strokeStyle = pal.branch;
+      c.globalAlpha = aMul * (b.depth === 0 ? 0.95 : 0.85);
+      c.lineWidth = Math.max(0.9, 3.4 * Math.pow(0.78, b.depth)) + (boost || 0);
+      c.lineCap = "round";
+      c.beginPath();
+      c.moveTo(px, py);
+      c.quadraticCurveTo(ax, ay, qx, qy);
+      c.stroke();
+
+      // taxa dots at living tips
+      if (b.isTip && p >= 1 && tree.state !== "dissolving") {
+        const nodeAge = clamp01((growClock - (b.start + b.dur)) / 350);
+        c.globalAlpha = aMul * 0.9 * nodeAge;
+        c.fillStyle = pal.leaf;
+        c.beginPath();
+        c.arc(qx, qy, (2.2 + (boost || 0) * 0.5) * nodeAge, 0, TAU);
+        c.fill();
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  /* ---------- shared tree lifecycle ---------- */
+
+  function buildTree(x, y, pile, mode) {
+    const kind = TREE_MODES.indexOf(mode) >= 0 ? mode : treeMode;
+    return kind === "legacy-v2"
+      ? buildLineage(x, y, pile, kind)
+      : buildSaguaro(x, y, pile, kind);
+  }
+
+  function seedTree(x, y, pile, mode) {
+    const tree = buildTree(x, y, pile, mode);
     // a newcomer claims its ground: overlapping elders dissolve early
     for (const other of trees) {
       if (other.state !== "dissolving" && rectsOverlap(tree.bbox, other.bbox, 0)) {
@@ -732,6 +1018,7 @@
     const standing = trees.filter((t) => t.state !== "dissolving");
     if (standing.length >= MAX_TREES) startDissolve(standing[0]);
     trees.push(tree);
+    return tree;
   }
 
   function startDissolve(tree) {
@@ -739,6 +1026,10 @@
     tree.state = "dissolving";
     tree.dissolveStart = performance.now();
     if (tree.pile) dispersePile(tree.pile);
+  }
+
+  function treeParts(tree) {
+    return tree.kind === "legacy-v2" ? tree.branches : tree.limbs;
   }
 
   function updateAndDrawTrees(dt, now) {
@@ -759,8 +1050,8 @@
         alpha = 1 - 0.45 * dp;
         // shed dust while crumbling
         if (Math.random() < 0.75) {
-          const l = pick(tree.limbs);
-          if (l.p > 0.2) spawnDust(l.x1, l.y1, { g: -10, vy: -10, glintChance: 0.12, scale: 0.85 });
+          const b = pick(treeParts(tree));
+          if (b.p > 0.2) spawnDust(b.x1, b.y1, { g: -10, vy: -10, glintChance: 0.12, scale: 0.85 });
         }
       } else {
         growClock = now - tree.born;
@@ -768,38 +1059,22 @@
 
       // mid layer yields to the front layer
       const dim = easeDim(tree, boxNearUI(tree.bbox, LAYER_PAD), dt);
-      alpha *= 1 - 0.5 * dim;
-      ctx.filter = dim > 0.04 ? "blur(" + (dim * 2.5).toFixed(2) + "px)" : "none";
+      alpha *= 1 - 0.35 * dim;
 
-      for (const l of tree.limbs) {
-        const p = clamp01((growClock - l.start) / l.dur);
-        l.p = p;
-        if (p <= 0) { l.x1 = l.ax; l.y1 = l.ay; continue; }
-        const s = l.total * easeOut(p);
-
-        const rot = Math.sin(t * 0.8 + tree.phase + l.swPh) * l.swAmp;
-        const cosA = Math.cos(rot), sinA = Math.sin(rot);
-
-        strokeLimbSpan(l, 0, s, cosA, sinA, alpha * 0.92);
-
-        const tip = limbPoint(l, s);
-        const dx = tip[0] - l.ax, dy = tip[1] - l.ay;
-        l.x1 = l.ax + dx * cosA - dy * sinA;
-        l.y1 = l.ay + dx * sinA + dy * cosA;
-
-        // leaf ball pops once the limb has met the canopy line
-        if (l.leaf) {
-          const leafAge = clamp01((growClock - (l.start + l.dur)) / 320);
-          if (leafAge > 0) {
-            ctx.globalAlpha = alpha * 0.95 * leafAge;
-            ctx.fillStyle = pal.leaf;
-            ctx.beginPath();
-            ctx.arc(l.x1, l.y1 - l.leafR * 0.45, l.leafR * easeOut(leafAge), 0, TAU);
-            ctx.fill();
-          }
-        }
+      const paint = tree.kind === "legacy-v2" ? drawLineage : drawSaguaro;
+      if (dim > 0.04) {
+        /* Blurring a branch spreads its ink over roughly (width + 2·radius),
+           so a thin stroke loses most of its peak opacity — in dark mode that
+           put branches right at the threshold of visibility, where the sway
+           made them wink in and out. Widening the stroke by the blur radius
+           keeps the core opaque, and the whole tree is rendered once and
+           blurred as an image so overlapping strokes cannot double-blend. */
+        const blurPx = dim * 1.8;
+        drawBlurred(tree.bbox, 16, blurPx, alpha,
+          (c) => paint(tree, c, growClock, 1, t, blurPx * 1.15));
+      } else {
+        paint(tree, ctx, growClock, alpha, t, 0);
       }
-      ctx.filter = "none";
       ctx.globalAlpha = 1;
     }
   }
@@ -932,15 +1207,19 @@
     }
   });
 
-  /* ---------- main loop ---------- */
-
   // tiny read-mostly handle so automated tests can exercise the real
   // generators without simulating cursor dwells; no runtime behaviour
   // depends on it
   window.__spice = {
-    buildTree, seedTree, trees, dunes, twinkles,
-    get ambientAt() { return ambientAt; }
+    buildTree, seedTree, startDissolve, setTreeMode,
+    trees, dunes, twinkles, motes,
+    TREE_MODES, DUNE_CYCLE, TWINKLE_MAX, MOTE_COUNT, SEED_DELAY,
+    get treeMode() { return treeMode; },
+    get ambientAt() { return ambientAt; },
+    get isDark() { return isDark; }
   };
+
+  /* ---------- main loop ---------- */
 
   let last = performance.now();
   function frame(now) {

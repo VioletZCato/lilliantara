@@ -7,7 +7,7 @@
         <meta name="description" content="Demo variants for lilliantara.com">
         <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5ecdd">
         <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171009">
-        <script>try{var t=localStorage.getItem("lt-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+        <script>try{var t=localStorage.getItem("lt-theme")||"night";if(t!=="auto")document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="night"}</script>
         <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='30' cy='34' r='13' fill='%23c96b2a'/%3E%3Ccircle cx='47' cy='15' r='5' fill='%23d98e4a'/%3E%3Ccircle cx='13' cy='49' r='4' fill='%23a34d1e'/%3E%3C/svg%3E">
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -110,20 +110,23 @@
 
             <div class="switches">
                 <div class="seg" role="group" aria-label="Theme">
-                    <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+                    <button type="button" data-theme-set="auto" aria-pressed="false">Auto</button>
                     <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
                     <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+                    <button type="button" data-theme-set="night" aria-pressed="true">Night</button>
                 </div>
 
                 <div class="seg" role="group" aria-label="Tree animation">
                     <button type="button" data-tree-set="legacy-v2" aria-pressed="false">Legacy (v2)</button>
                     <button type="button" data-tree-set="phylo-v4" aria-pressed="true">Phylo (v4)</button>
                     <button type="button" data-tree-set="lively-v5" aria-pressed="false">Lively (v5)</button>
+                    <button type="button" data-tree-set="hybrid-v6" aria-pressed="false">Hybrid (v6)</button>
                 </div>
             </div>
         </main>
 
-        <script src="js/spice.js?v=4" defer></script>
-        <script src="js/controls.js?v=4" defer></script>
+        <script src="js/spice.js?v=6" defer></script>
+        <script src="js/controls.js?v=6" defer></script>
+        <script src="js/torch.js?v=6" defer></script>
     </body>
 </html>

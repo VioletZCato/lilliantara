@@ -11,8 +11,10 @@
   const root = document.documentElement;
   const THEME_KEY = "lt-theme";
   const TREE_KEY = "lt-trees";
-  const TREE_MODES = ["legacy-v2", "phylo-v4", "lively-v5"];
+  const TREE_MODES = ["legacy-v2", "phylo-v4", "lively-v5", "hybrid-v6"];
   const TREE_DEFAULT = "phylo-v4";
+  const THEMES = ["auto", "light", "dark", "night"];
+  const THEME_DEFAULT = "night";
 
   function press(nodes, attr, choice) {
     for (const b of nodes) b.setAttribute("aria-pressed", String(b.dataset[attr] === choice));
@@ -23,14 +25,12 @@
   const themeButtons = document.querySelectorAll("[data-theme-set]");
 
   function applyTheme(choice) {
-    if (choice === "dark" || choice === "light") {
-      root.dataset.theme = choice;
-      try { localStorage.setItem(THEME_KEY, choice); } catch (e) {}
-    } else {
-      choice = "auto";
-      delete root.dataset.theme;
-      try { localStorage.removeItem(THEME_KEY); } catch (e) {}
-    }
+    if (THEMES.indexOf(choice) < 0) choice = THEME_DEFAULT;
+    // "auto" means no override, so it has to be stored rather than cleared —
+    // an absent key is what selects the Night default on a first visit
+    if (choice === "auto") delete root.dataset.theme;
+    else root.dataset.theme = choice;
+    try { localStorage.setItem(THEME_KEY, choice); } catch (e) {}
     press(themeButtons, "themeSet", choice);
   }
 
@@ -40,7 +40,7 @@
 
   let storedTheme = null;
   try { storedTheme = localStorage.getItem(THEME_KEY); } catch (e) {}
-  applyTheme(storedTheme || "auto");
+  applyTheme(storedTheme || THEME_DEFAULT);
 
   /* ---------- tree animation ---------- */
 

@@ -45,6 +45,7 @@
       glint: "#e8934a",
       branch: "#d98a45",
       leaf: "#b4ff4b",
+      leafNatural: "#6f9440",  // the quieter green the v6 hybrids wear
       leafDead: "#c8481a",     // spent leaves on dead-end limbs
       dune: "#7d6b3e",
       duneRGB: "125, 107, 62",
@@ -56,6 +57,7 @@
       glint: "#ffe0b0",
       branch: "#d98a45",
       leaf: "#a7e14e",
+      leafNatural: "#86ad55",
       leafDead: "#e2622c",     // lifted so it reads against the night ground
       dune: "#8a744a",
       duneRGB: "138, 116, 74",
@@ -64,15 +66,23 @@
     }
   };
 
+  // Night is the dark palette under a blacker sky: the only things that
+  // change are the sparkles, which turn to white starlight.
+  PALETTES.night = Object.assign({}, PALETTES.dark, {
+    glint: "#ffffff",
+    mote: "rgba(226, 226, 232,"
+  });
+
   const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
   let pal = PALETTES.light;
-  let isDark = false;
+  let isDark = false, isNight = false;
   // honour the site's own theme override (the controls write data-theme)
   // before falling back to the OS preference
   function computePal() {
     const forced = document.documentElement.dataset.theme;
-    isDark = forced === "dark" || (forced !== "light" && darkMq.matches);
-    pal = isDark ? PALETTES.dark : PALETTES.light;
+    isNight = forced === "night";
+    isDark = isNight || forced === "dark" || (forced !== "light" && darkMq.matches);
+    pal = isNight ? PALETTES.night : isDark ? PALETTES.dark : PALETTES.light;
   }
   computePal();
   if (darkMq.addEventListener) darkMq.addEventListener("change", computePal);
@@ -169,7 +179,7 @@
   function refreshRects() {
     uiRects = [];
     const els = document.querySelectorAll(
-      "main h1, main p, main a, main .seg, .site-controls, .back");
+      "main h1, main p, main a, main .seg, .site-controls, .back, .torch");
     for (const el of els) {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) continue;
@@ -327,10 +337,16 @@
     }
   }
 
+  /* Softened crest: the old pure power curve met the peak with a steep
+     slope, giving a sharp point. Blending it toward a smoothstep — which
+     arrives flat — rounds the crown while the differing exponents keep
+     the windward/leeward asymmetry. */
+  const DUNE_ROUND = 0.6;
   function ridgeRise(d, t) {
-    return t < d.peakT
-      ? Math.pow(t / d.peakT, 1.7)
-      : Math.pow((1 - t) / (1 - d.peakT), 1.35);
+    const u = t < d.peakT ? t / d.peakT : (1 - t) / (1 - d.peakT);
+    const sharp = Math.pow(u, t < d.peakT ? 1.7 : 1.35);
+    const round = u * u * (3 - 2 * u);
+    return sharp * (1 - DUNE_ROUND) + round * DUNE_ROUND;
   }
 
   function makeRidge(d) {
@@ -381,14 +397,16 @@
       // dunes like company: sometimes settle overlapping a neighbour,
       // which is what the behind-one-another occlusion is for
       const mates = dunes.filter((o) => o !== d && o.active && o.side === d.side);
+      // dunes keep to the bottom third of the view
+      const bandT = H * 0.68, bandB = H * 0.94;
       if (mates.length && Math.random() < 0.45) {
         const m = pick(mates);
         x = m.x + rand(-0.65, 0.65) * m.w;
         y = m.y + rand(-6, 12);
-        if (x < bandL || x + w > bandR || y > H * 0.94 || y < H * 0.1 + 30) continue;
+        if (x < bandL || x + w > bandR || y > bandB || y < bandT) continue;
       } else {
         x = rand(bandL, bandR - w);
-        y = rand(H * 0.10 + 30, H * 0.94);
+        y = rand(bandT, bandB);
       }
       const h = rand(12, 30);
       const box = { left: x, right: x + w, top: y - h, bottom: y + 3 };
@@ -554,7 +572,49 @@
   const TWINKLE_MAX = 32;   // 18 * 1.8
   let twinkleTimer = rand(0.2, 0.6);
 
+  /* Night sky: instead of wandering anywhere, stars belong to a fixed
+     constellation drawn once per page load (and again after a resize,
+     since the coordinates are viewport-relative). They wink in and out,
+     but only ever at these places, and only in the top third. */
+  let starAnchors = [];
+
+  function makeStarAnchors() {
+    starAnchors = [];
+    const want = 30;
+    for (let i = 0; i < want; i++) {
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const x = rand(W * 0.04, W * 0.96);
+        const y = rand(H * 0.05, H * 0.33);
+        if (pointNearUI(x, y, 18)) continue;
+        let clear = true;
+        for (const a of starAnchors) {
+          if (Math.hypot(x - a.x, y - a.y) < 30) { clear = false; break; }
+        }
+        if (!clear) continue;
+        starAnchors.push({ x, y, size: rand(1.4, 3) });
+        break;
+      }
+    }
+  }
+
   function spawnTwinkle(now) {
+    if (isNight) {
+      // the constellation is built lazily, so it is measured against a
+      // settled layout rather than a half-loaded one
+      if (!starAnchors.length) makeStarAnchors();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const a = pick(starAnchors);
+        if (!a) return;
+        if (twinkles.some((s) => s.anchor === a)) continue;
+        twinkles.push({
+          x: a.x, y: a.y, anchor: a, size: a.size,
+          born: now, ttl: rand(4200, 9000),
+          tw: rand(0, TAU), sp: rand(0.7, 1.6), dim: 0
+        });
+        return;
+      }
+      return;
+    }
     for (let attempt = 0; attempt < 12; attempt++) {
       const x = rand(W * 0.04, W * 0.96);
       const y = rand(H * 0.05, H * 0.95);
@@ -692,7 +752,7 @@
      TREES (mid layer) — three interchangeable animations
      ============================================================ */
 
-  const TREE_MODES = ["legacy-v2", "phylo-v4", "lively-v5"];
+  const TREE_MODES = ["legacy-v2", "phylo-v4", "lively-v5", "hybrid-v6"];
   const TREE_DEFAULT = "phylo-v4";
   const trees = [];
 
@@ -998,13 +1058,144 @@
     c.globalAlpha = 1;
   }
 
+  /* ---------- hybrid-v6: angular growth, halfway between v2 and v5 ----------
+     It branches recursively like the v2 lineage tree, but every branch is
+     two straight segments meeting at an elbow — no quadratic curl — and the
+     joins are mitred, so the whole plant reads angular and sparse rather
+     than rounded and cartoonish. Tips that run the full depth close with a
+     small circle of natural green, borrowed from v5's leaf balls but much
+     smaller; lines that die out early stay bare. */
+
+  function buildHybrid(x, y, pile, kind) {
+    const branches = [];
+    const scale = rand(0.9, 1.2);
+    const maxDepth = 4 + (Math.random() < 0.5 ? 1 : 0);
+    const w0 = 4.2 * scale;
+
+    function grow(parent, depth, angle, start) {
+      const len = depth === 0
+        ? rand(30, 40) * scale
+        : branches[parent].len * rand(0.68, 0.82);
+      const dur = 220 + len * 5;
+      const b = {
+        parent, depth, len,
+        baseAngle: angle,
+        kink: gauss() * 0.3,       // the elbow's change of direction
+        split: rand(0.5, 0.62),    // where along the branch it sits
+        start, dur,
+        leaf: false,
+        w: Math.max(1.1, w0 * Math.pow(0.72, depth)),
+        x1: x, y1: y, p: 0
+      };
+      const idx = branches.push(b) - 1;
+      if (depth >= maxDepth) { b.leaf = true; return idx; }
+      // some lines simply stop — those tips get no leaf
+      if (depth >= 2 && Math.random() < 0.12 + depth * 0.05) return idx;
+      const spread = rand(0.34, 0.52);
+      const lean = gauss() * 0.08;
+      const childStart = start + dur * 0.85;
+      grow(idx, depth + 1, angle - spread * rand(0.6, 1.1) + lean, childStart + rand(0, 70));
+      grow(idx, depth + 1, angle + spread * rand(0.6, 1.1) + lean, childStart + rand(0, 70));
+      return idx;
+    }
+
+    grow(-1, 0, -Math.PI / 2 + gauss() * 0.07, 0);
+
+    let growTotal = 0;
+    for (const b of branches) growTotal = Math.max(growTotal, b.start + b.dur);
+
+    const leafR = 3 * scale;
+    let minX = x, maxX = x, minY = y, maxY = y;
+    for (const b of branches) {
+      const px = b.parent < 0 ? x : branches[b.parent].nx;
+      const py = b.parent < 0 ? y : branches[b.parent].ny;
+      const mx = px + Math.cos(b.baseAngle) * b.len * b.split;
+      const my = py + Math.sin(b.baseAngle) * b.len * b.split;
+      b.nx = mx + Math.cos(b.baseAngle + b.kink) * b.len * (1 - b.split);
+      b.ny = my + Math.sin(b.baseAngle + b.kink) * b.len * (1 - b.split);
+      minX = Math.min(minX, mx, b.nx); maxX = Math.max(maxX, mx, b.nx);
+      minY = Math.min(minY, my, b.ny); maxY = Math.max(maxY, my, b.ny);
+    }
+
+    return {
+      kind, x, y, branches, growTotal, pile, leafR,
+      bbox: {
+        left: minX - leafR - 5, right: maxX + leafR + 5,
+        top: minY - leafR - 5, bottom: Math.max(maxY, y) + 6
+      },
+      born: performance.now(),
+      ttl: rand(15000, 26000),
+      state: "growing",
+      dissolveStart: 0,
+      phase: rand(0, TAU),
+      swayAmp: rand(0.004, 0.008),
+      dim: 0
+    };
+  }
+
+  function drawHybrid(tree, c, growClock, aMul, t, boost) {
+    for (const b of tree.branches) {
+      const sway = Math.sin(t * 0.9 + tree.phase + b.depth * 1.1 + b.baseAngle) * tree.swayAmp * b.depth;
+      const angle = b.baseAngle + sway;
+
+      let px, py;
+      if (b.parent < 0) { px = tree.x; py = tree.y; }
+      else { px = tree.branches[b.parent].x1; py = tree.branches[b.parent].y1; }
+
+      const p = clamp01((growClock - b.start) / b.dur);
+      b.p = p;
+      if (p <= 0) { b.x1 = px; b.y1 = py; continue; }
+
+      const grown = b.len * easeOut(p);
+      const l1 = b.len * b.split;
+      const mx = px + Math.cos(angle) * l1;
+      const my = py + Math.sin(angle) * l1;
+      const a2 = angle + b.kink;
+
+      c.strokeStyle = pal.branch;
+      c.globalAlpha = aMul * (b.depth === 0 ? 0.95 : 0.88);
+      c.lineWidth = b.w + (boost || 0);
+      c.lineCap = "round";
+      c.lineJoin = "miter";
+      c.miterLimit = 6;
+      c.beginPath();
+      c.moveTo(px, py);
+      let ex, ey;
+      if (grown <= l1) {
+        ex = px + Math.cos(angle) * grown;
+        ey = py + Math.sin(angle) * grown;
+        c.lineTo(ex, ey);
+      } else {
+        c.lineTo(mx, my);
+        const r2 = grown - l1;
+        ex = mx + Math.cos(a2) * r2;
+        ey = my + Math.sin(a2) * r2;
+        c.lineTo(ex, ey);
+      }
+      c.stroke();
+      b.x1 = ex; b.y1 = ey;
+
+      if (b.leaf) {
+        const age = clamp01((growClock - (b.start + b.dur)) / 340);
+        if (age > 0) {
+          c.globalAlpha = aMul * 0.95 * age;
+          c.fillStyle = pal.leafNatural;
+          c.beginPath();
+          c.arc(ex, ey, (tree.leafR + (boost || 0) * 0.5) * easeOut(age), 0, TAU);
+          c.fill();
+        }
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
   /* ---------- shared tree lifecycle ---------- */
 
   function buildTree(x, y, pile, mode) {
     const kind = TREE_MODES.indexOf(mode) >= 0 ? mode : treeMode;
-    return kind === "legacy-v2"
-      ? buildLineage(x, y, pile, kind)
-      : buildSaguaro(x, y, pile, kind);
+    if (kind === "legacy-v2") return buildLineage(x, y, pile, kind);
+    if (kind === "hybrid-v6") return buildHybrid(x, y, pile, kind);
+    return buildSaguaro(x, y, pile, kind);
   }
 
   function seedTree(x, y, pile, mode) {
@@ -1029,7 +1220,7 @@
   }
 
   function treeParts(tree) {
-    return tree.kind === "legacy-v2" ? tree.branches : tree.limbs;
+    return tree.branches || tree.limbs;
   }
 
   function updateAndDrawTrees(dt, now) {
@@ -1061,7 +1252,9 @@
       const dim = easeDim(tree, boxNearUI(tree.bbox, LAYER_PAD), dt);
       alpha *= 1 - 0.35 * dim;
 
-      const paint = tree.kind === "legacy-v2" ? drawLineage : drawSaguaro;
+      const paint = tree.kind === "legacy-v2" ? drawLineage
+        : tree.kind === "hybrid-v6" ? drawHybrid
+        : drawSaguaro;
       if (dim > 0.04) {
         /* Blurring a branch spreads its ink over roughly (width + 2·radius),
            so a thin stroke loses most of its peak opacity — in dark mode that
@@ -1199,6 +1392,7 @@
     refreshRects();
     ambientAt = performance.now() + RESIZE_WAIT;
     twinkles.length = 0;
+    starAnchors.length = 0;   // the constellation is viewport-relative
     for (const d of dunes) {
       d.active = false;
       d.fade = 0;
@@ -1216,7 +1410,9 @@
     TREE_MODES, DUNE_CYCLE, TWINKLE_MAX, MOTE_COUNT, SEED_DELAY,
     get treeMode() { return treeMode; },
     get ambientAt() { return ambientAt; },
-    get isDark() { return isDark; }
+    get isDark() { return isDark; },
+    get isNight() { return isNight; },
+    get starAnchors() { return starAnchors; }
   };
 
   /* ---------- main loop ---------- */
